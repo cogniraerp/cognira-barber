@@ -1,7 +1,8 @@
 # Cognira Barber en Coolify (recurso "Docker Compose" desde el repositorio de GitHub).
 # Guía: deploy/COOLIFY.md. Las variables ${…} se completan en Coolify (pestaña Environment Variables).
-# Traefik (el proxy de Coolify) pone el HTTPS: en Coolify asigna los dominios a `web` (puerto 80)
-# y a `api` (puerto 3000). La base es el Postgres que ya tienes en Coolify (no va en este compose).
+# Traefik (el proxy de Coolify) pone el HTTPS: en Coolify asigna los dominios a `web` y a `api`
+# (los dos escuchan en el puerto 80 del contenedor, así no hace falta indicar puerto).
+# La base es el Postgres de Coolify: se llega por la red `coolify` con su host interno.
 
 x-api-env: &api-env
   NODE_ENV: production
@@ -47,6 +48,7 @@ services:
     environment:
       NODE_ENV: production
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}
+    networks: [default, coolify]
     restart: "no"
     # Clave de Coolify (la quita antes de ejecutar): un servicio que termina no cuenta como caído.
     exclude_from_hc: true
@@ -56,15 +58,16 @@ services:
     environment:
       <<: *api-env
       APP_MODE: api
-      PORT: "3000"
-    expose: ["3000"]
+      PORT: "80"
+    expose: ["80"]
+    networks: [default, coolify]
     volumes:
       - storage:/app/storage
     depends_on:
       migrate: { condition: service_completed_successfully }
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/v1/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/v1/health || exit 1"]
       interval: 15s
       timeout: 3s
       start_period: 20s
@@ -75,6 +78,7 @@ services:
     environment:
       <<: *api-env
       APP_MODE: worker
+    networks: [default, coolify]
     volumes:
       - storage:/app/storage
     depends_on:
@@ -93,6 +97,11 @@ services:
         VITE_PUBLIC_SUBDOMAINS: ${PUBLIC_SUBDOMAINS:-false}
     expose: ["80"]
     restart: unless-stopped
+
+networks:
+  # Red de Coolify donde vive el Postgres (y su host interno).
+  coolify:
+    external: true
 
 volumes:
   # Fotos y logos con STORAGE_DRIVER=local (persisten entre despliegues). Con R2 (s3) no se usa.
