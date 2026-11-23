@@ -5,7 +5,7 @@ Coolify despliega desde el repositorio de GitHub con `docker-compose.coolify.yml
 | | Producción | Staging (pruebas) |
 |---|---|---|
 | Panel (servicio `web`, puerto 80) | `https://app.barber.codecraft.net.pe` | `https://app.staging.barber.codecraft.net.pe` |
-| API (servicio `api`, puerto 80 interno) | `https://api.barber.codecraft.net.pe` | `https://api.staging.barber.codecraft.net.pe` |
+| API (servicio `api`, puerto 3000) | `https://api.barber.codecraft.net.pe` | `https://api.staging.barber.codecraft.net.pe` |
 | Página de cada barbería | `https://app.barber.codecraft.net.pe/b/<slug>` | `https://app.staging.barber.codecraft.net.pe/b/<slug>` |
 | Base | `barberia_prod` | `barberia_staging` |
 
@@ -31,7 +31,7 @@ api.staging.barber    A   172.212.202.62
    - La red `coolify` (donde está el Postgres) ya la declara el compose; no hace falta activar nada.
 4. **Dominios:**
    - en `web`, pon `https://app.barber.codecraft.net.pe` (Coolify usa el puerto 80 expuesto);
-   - en `api`, pon `https://api.barber.codecraft.net.pe` (también escucha en el 80);
+   - en `api`, pon `https://api.barber.codecraft.net.pe:3000` (el `:3000` le dice a Traefik a qué puerto ir);
    - deja `migrate` y `worker` sin dominio.
 5. Llena las **Environment Variables** (siguiente sección) y pulsa **Deploy**.
 
