@@ -58,6 +58,8 @@ services:
       APP_MODE: api
       PORT: "3000"
     expose: ["3000"]
+    volumes:
+      - storage:/app/storage
     depends_on:
       migrate: { condition: service_completed_successfully }
     restart: unless-stopped
@@ -73,6 +75,8 @@ services:
     environment:
       <<: *api-env
       APP_MODE: worker
+    volumes:
+      - storage:/app/storage
     depends_on:
       api: { condition: service_healthy }
     restart: unless-stopped
@@ -89,3 +93,7 @@ services:
         VITE_PUBLIC_SUBDOMAINS: ${PUBLIC_SUBDOMAINS:-false}
     expose: ["80"]
     restart: unless-stopped
+
+volumes:
+  # Fotos y logos con STORAGE_DRIVER=local (persisten entre despliegues). Con R2 (s3) no se usa.
+  storage:
