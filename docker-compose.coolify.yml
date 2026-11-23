@@ -1,0 +1,91 @@
+# Cognira Barber en Coolify (recurso "Docker Compose" desde el repositorio de GitHub).
+# Guía: deploy/COOLIFY.md. Las variables ${…} se completan en Coolify (pestaña Environment Variables).
+# Traefik (el proxy de Coolify) pone el HTTPS: en Coolify asigna los dominios a `web` (puerto 80)
+# y a `api` (puerto 3000). La base es el Postgres que ya tienes en Coolify (no va en este compose).
+
+x-api-env: &api-env
+  NODE_ENV: production
+  DATABASE_URL: ${DATABASE_URL}
+  ROOT_DOMAIN: ${ROOT_DOMAIN}
+  WEB_URL: ${WEB_URL}
+  PUBLIC_API_URL: ${PUBLIC_API_URL}
+  CORS_ORIGINS: ${WEB_URL}
+  # Traefik es el único proxy delante: la IP real del cliente viene en X-Forwarded-For.
+  TRUST_PROXY: "1"
+  JWT_SECRET: ${JWT_SECRET}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  ENCRYPTION_KEY_VERSION: ${ENCRYPTION_KEY_VERSION:-1}
+  LOG_LEVEL: ${LOG_LEVEL:-log}
+  LEGAL_TRADE_NAME: ${LEGAL_TRADE_NAME:-Cognira Barber}
+  LEGAL_NAME: ${LEGAL_NAME}
+  LEGAL_RUC: ${LEGAL_RUC}
+  LEGAL_ADDRESS: ${LEGAL_ADDRESS}
+  LEGAL_EMAIL: ${LEGAL_EMAIL}
+  STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}
+  S3_ENDPOINT: ${S3_ENDPOINT}
+  S3_REGION: ${S3_REGION:-auto}
+  S3_BUCKET: ${S3_BUCKET}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL}
+  RESEND_API_KEY: ${RESEND_API_KEY}
+  EMAIL_FROM: ${EMAIL_FROM}
+  WHATSAPP_PLATFORM_PHONE_NUMBER_ID: ${WHATSAPP_PLATFORM_PHONE_NUMBER_ID}
+  WHATSAPP_PLATFORM_ACCESS_TOKEN: ${WHATSAPP_PLATFORM_ACCESS_TOKEN}
+  WHATSAPP_PLATFORM_WABA_ID: ${WHATSAPP_PLATFORM_WABA_ID}
+  WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN}
+  META_APP_SECRET: ${META_APP_SECRET}
+  BILLING_WHATSAPP_ENABLED: ${BILLING_WHATSAPP_ENABLED:-false}
+  SENTRY_DSN: ${SENTRY_DSN}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+
+services:
+  # Aplica las migraciones en cada despliegue y termina (usuario dueño de la base, no la API).
+  migrate:
+    build: { context: ./barbersaas-api, target: deps }
+    command: ["pnpm", "prisma", "migrate", "deploy"]
+    environment:
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL}
+    restart: "no"
+    # Clave de Coolify (la quita antes de ejecutar): un servicio que termina no cuenta como caído.
+    exclude_from_hc: true
+
+  api:
+    build: ./barbersaas-api
+    environment:
+      <<: *api-env
+      APP_MODE: api
+      PORT: "3000"
+    expose: ["3000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/v1/health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 5
+
+  worker:
+    build: ./barbersaas-api
+    environment:
+      <<: *api-env
+      APP_MODE: worker
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  web:
+    build:
+      context: ./barbersaas-web
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL}
+        VITE_ROOT_DOMAIN: ${ROOT_DOMAIN}
+        # true solo cuando exista DNS y certificado comodín para {slug}.ROOT_DOMAIN.
+        VITE_PUBLIC_SUBDOMAINS: ${PUBLIC_SUBDOMAINS:-false}
+    expose: ["80"]
+    restart: unless-stopped

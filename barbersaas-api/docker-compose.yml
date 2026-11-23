@@ -1,0 +1,80 @@
+name: barbersaas
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: barbersaas
+      TZ: UTC
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d barbersaas"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # S3 local (adobe/s3mock) para probar STORAGE_DRIVER=s3 sin cuenta en la nube:
+  #   docker compose --profile s3 up -d s3  → http://localhost:59000, bucket "media" (cualquier clave)
+  s3:
+    image: adobe/s3mock:3.11.0
+    environment:
+      initialBuckets: media
+    ports:
+      - "127.0.0.1:59000:9090"
+    profiles: ["s3"]
+
+  migrate:
+    build:
+      context: .
+      target: deps
+    command: ["pnpm", "prisma", "migrate", "deploy"]
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://postgres:postgres@db:5432/barbersaas
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["app"]
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      APP_MODE: api
+      DATABASE_URL: postgresql://barbersaas_api:barbersaas_api@db:5432/barbersaas
+      PORT: "3000"
+      STORAGE_LOCAL_DIR: /app/storage
+    volumes:
+      - storage:/app/storage
+    ports:
+      - "127.0.0.1:3100:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    profiles: ["app"]
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      APP_MODE: worker
+      DATABASE_URL: postgresql://barbersaas_api:barbersaas_api@db:5432/barbersaas
+      STORAGE_LOCAL_DIR: /app/storage
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Sin HTTP: el healthcheck de la imagen no aplica.
+    healthcheck:
+      disable: true
+    profiles: ["app"]
+
+volumes:
+  pgdata:
+  storage:

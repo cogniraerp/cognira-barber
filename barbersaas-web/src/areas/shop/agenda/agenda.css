@@ -1,0 +1,131 @@
+/* Ajustes de react-big-calendar a los tokens del panel. */
+.agenda {
+  --agenda-line: var(--border);
+  overflow: hidden;
+}
+.agenda .rbc-time-view,
+.agenda .rbc-month-view {
+  border: 0;
+}
+.agenda .rbc-time-view {
+  height: calc(100dvh - 15rem);
+  min-height: 32rem;
+}
+.agenda .rbc-header {
+  padding: 0.5rem 0.25rem;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  border-color: var(--agenda-line);
+  text-transform: capitalize;
+}
+.agenda .rbc-header + .rbc-header,
+.agenda .rbc-day-slot .rbc-time-slot,
+.agenda .rbc-time-content > * + * > *,
+.agenda .rbc-timeslot-group,
+.agenda .rbc-time-header-content,
+.agenda .rbc-time-content,
+.agenda .rbc-time-header.rbc-overflowing {
+  border-color: var(--agenda-line);
+}
+/* Rejilla discreta: solo la línea de la hora; los cuartos casi no se ven. */
+.agenda .rbc-day-slot .rbc-time-slot {
+  border-top-color: color-mix(in oklab, var(--agenda-line) 40%, transparent);
+}
+.agenda .rbc-timeslot-group {
+  min-height: 3.5rem;
+}
+.agenda .rbc-label {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.agenda .rbc-today {
+  background: color-mix(in oklab, var(--brand) 4%, transparent);
+}
+.agenda .rbc-current-time-indicator {
+  background: var(--destructive);
+  height: 2px;
+}
+/* Sin fila "todo el día": las ausencias largas se pintan dentro de cada día. */
+.agenda .rbc-allday-cell {
+  display: none;
+}
+.agenda .rbc-time-header-cell {
+  min-height: 0;
+}
+.agenda .rbc-slot-selection {
+  background: color-mix(in oklab, var(--brand) 15%, transparent);
+  color: var(--foreground);
+  border: 1px dashed var(--brand);
+  border-radius: 4px;
+}
+
+/* Citas: fondo claro del estado + borde izquierdo; el texto es tinta normal. */
+.agenda .rbc-event.agenda-ev,
+.agenda .rbc-day-slot .rbc-event.agenda-ev {
+  border-width: 0 0 0 4px;
+  border-style: solid;
+  border-radius: 6px;
+  padding: 2px 6px;
+  box-shadow: 0 0 0 1px var(--card);
+  outline: none;
+}
+.agenda .rbc-event.agenda-ev .rbc-event-label {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.agenda .rbc-event.agenda-ev:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.agenda .rbc-selected.agenda-ev {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.agenda .rbc-day-slot .rbc-events-container {
+  margin-right: 6px;
+}
+
+/* Bloqueos y ausencias: rayado neutro (no compite con los estados). */
+.agenda .rbc-event.agenda-off,
+.agenda-off-swatch {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--muted) 0 6px,
+    color-mix(in oklab, var(--muted-foreground) 18%, var(--muted)) 6px 8px
+  );
+  color: var(--muted-foreground);
+  border: 1px solid var(--agenda-line);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.agenda .rbc-event.agenda-off .rbc-event-label {
+  display: none;
+}
+
+/* Día con varios barberos: columnas con ancho mínimo y scroll horizontal en móvil. */
+.agenda-resources .rbc-time-view {
+  overflow-x: auto;
+}
+.agenda-resources .rbc-time-header,
+.agenda-resources .rbc-time-content {
+  min-width: calc(3.5rem + var(--agenda-cols, 1) * 9rem);
+}
+
+.agenda .rbc-addons-dnd-drag-preview,
+.agenda .rbc-addons-dnd .rbc-addons-dnd-dragged-event {
+  opacity: 0.6;
+}
+
+/* Citas cortas: hora y nombre en una sola línea. */
+.agenda .rbc-day-slot .rbc-event.agenda-compact {
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+.agenda .rbc-day-slot .rbc-event.agenda-compact .rbc-event-label {
+  flex: none;
+  padding: 0;
+}
+.agenda .rbc-day-slot .rbc-event .rbc-event-content {
+  min-width: 0;
+}

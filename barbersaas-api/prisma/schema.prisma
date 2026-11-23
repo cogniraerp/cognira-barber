@@ -1,0 +1,1638 @@
+// BarberSaaS — esquema Fase 1
+// Convenciones: tablas/columnas snake_case, PK uuid, timestamps UTC (timestamptz),
+// dinero en céntimos (Int), soft delete con deleted_at.
+// RLS, exclusion constraints e índices parciales viven en migraciones SQL a mano
+// (ver prisma/migrations/*_rls y *_constraints).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  // Fijo: si no, Prisma lo infiere del tsconfig y en Docker (generate antes de copiar tsconfig) cambia.
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum PlatformRole {
+  superadmin
+  support
+
+  @@map("platform_role")
+}
+
+enum MemberRole {
+  owner
+  admin
+  receptionist
+  barber
+
+  @@map("member_role")
+}
+
+enum MembershipStatus {
+  invited
+  active
+  disabled
+
+  @@map("membership_status")
+}
+
+enum BarbershopStatus {
+  onboarding
+  active
+  suspended
+  deleted
+
+  @@map("barbershop_status")
+}
+
+enum BarbershopCategory {
+  barbershop
+  salon
+  spa
+
+  @@map("barbershop_category")
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  suspended
+  canceled
+
+  @@map("subscription_status")
+}
+
+enum BillingInterval {
+  month
+  year
+
+  @@map("billing_interval")
+}
+
+enum InvoiceStatus {
+  draft
+  open
+  paid
+  void
+  failed
+
+  @@map("invoice_status")
+}
+
+enum HolidaySource {
+  manual
+  pe_national
+
+  @@map("holiday_source")
+}
+
+enum StaffHourKind {
+  work
+  break
+
+  @@map("staff_hour_kind")
+}
+
+enum TimeOffKind {
+  vacation
+  absence
+  block
+
+  @@map("time_off_kind")
+}
+
+enum AppointmentStatus {
+  /// Esperando el adelanto (Fase 3): el horario queda apartado hasta hold_expires_at.
+  awaiting_payment
+  pending
+  confirmed
+  in_progress
+  completed
+  no_show
+  canceled
+
+  @@map("appointment_status")
+}
+
+enum AppointmentSource {
+  online
+  walk_in
+  staff
+  phone
+
+  @@map("appointment_source")
+}
+
+enum MessagingProvider {
+  platform
+  cloud_api
+  twilio
+  wa_me
+
+  @@map("messaging_provider")
+}
+
+enum ConnectionStatus {
+  unverified
+  ok
+  error
+
+  @@map("connection_status")
+}
+
+enum MessageEvent {
+  booking_requested
+  booking_confirmed
+  reminder
+  canceled
+  rescheduled
+  staff_new_booking
+
+  @@map("message_event")
+}
+
+enum MessageChannel {
+  whatsapp
+  email
+
+  @@map("message_channel")
+}
+
+enum ProviderTemplateStatus {
+  pending
+  approved
+  rejected
+  n_a
+
+  @@map("provider_template_status")
+}
+
+enum MessageStatus {
+  queued
+  /// tomado por un worker (se re-encola solo si el worker muere)
+  sending
+  /// proveedor wa.me: requiere que alguien toque "Enviar" en el panel
+  manual
+  sent
+  delivered
+  read
+  failed
+
+  @@map("message_status")
+}
+
+// ─────────────────────────── Plataforma ───────────────────────────
+
+model Plan {
+  id                String    @id @default(uuid()) @db.Uuid
+  code              String    @unique
+  name              String
+  description       String?
+  priceMonthlyCents Int       @map("price_monthly_cents")
+  priceYearlyCents  Int       @map("price_yearly_cents")
+  currency          String    @default("PEN") @db.Char(3)
+  trialDays         Int       @default(14) @map("trial_days")
+  /// { staff, locations, services, bookingsPerMonth, whatsappPerMonth, storageMb }
+  limits            Json      @default("{}")
+  /// { loyalty, advancedReports, onlinePayments, multiLocation, api, customDomain, removeBranding }
+  features          Json      @default("{}")
+  isPublic          Boolean   @default(true) @map("is_public")
+  sortOrder         Int       @default(0) @map("sort_order")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  subscriptions Subscription[]
+  pendingFor    Subscription[] @relation("PendingPlan")
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                 String             @id @default(uuid()) @db.Uuid
+  barbershopId       String             @unique @map("barbershop_id") @db.Uuid
+  planId             String             @map("plan_id") @db.Uuid
+  status             SubscriptionStatus @default(trialing)
+  interval           BillingInterval    @default(month)
+  trialEndsAt        DateTime?          @map("trial_ends_at") @db.Timestamptz(6)
+  currentPeriodEnd   DateTime?          @map("current_period_end") @db.Timestamptz(6)
+  limitsOverride     Json?              @map("limits_override")
+  discountPercent    Int                @default(0) @map("discount_percent")
+  gateway            String             @default("manual")
+  gatewayRef         String?            @map("gateway_ref")
+  /// Cambio programado para el fin del periodo (bajar de plan o cambiar mensual/anual).
+  pendingPlanId      String?            @map("pending_plan_id") @db.Uuid
+  pendingInterval    BillingInterval?   @map("pending_interval")
+  pendingEffectiveAt DateTime?          @map("pending_effective_at") @db.Timestamptz(6)
+  canceledAt         DateTime?          @map("canceled_at") @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop  Barbershop @relation(fields: [barbershopId], references: [id])
+  plan        Plan       @relation(fields: [planId], references: [id])
+  pendingPlan Plan?      @relation("PendingPlan", fields: [pendingPlanId], references: [id])
+  invoices    Invoice[]
+
+  @@index([status])
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  barbershopId   String        @map("barbershop_id") @db.Uuid
+  subscriptionId String        @map("subscription_id") @db.Uuid
+  number         String        @unique
+  amountCents    Int           @map("amount_cents")
+  currency       String        @db.Char(3)
+  status         InvoiceStatus @default(open)
+  periodStart    DateTime      @map("period_start") @db.Timestamptz(6)
+  periodEnd      DateTime      @map("period_end") @db.Timestamptz(6)
+  dueAt          DateTime      @map("due_at") @db.Timestamptz(6)
+  paidAt         DateTime?     @map("paid_at") @db.Timestamptz(6)
+  gatewayRef     String?       @map("gateway_ref")
+  notes          String?
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop   Barbershop      @relation(fields: [barbershopId], references: [id])
+  subscription Subscription    @relation(fields: [subscriptionId], references: [id])
+  charges      InvoiceCharge[]
+  notices      BillingNotice[]
+
+  @@index([barbershopId, createdAt])
+  @@index([status, dueAt])
+  @@map("invoices")
+}
+
+/// Fila única (id = 1) con la configuración global de la plataforma.
+model PlatformSettings {
+  id        Int      @id @default(1)
+  data      Json     @default("{}")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("platform_settings")
+}
+
+// ───────────────────────────── Usuarios ─────────────────────────────
+
+model User {
+  id              String        @id @default(uuid()) @db.Uuid
+  email           String        @unique
+  phone           String?
+  fullName        String        @map("full_name")
+  avatarUrl       String?       @map("avatar_url")
+  /// Solo para el proveedor de auth local (null cuando se use un IdP externo).
+  passwordHash    String?       @map("password_hash")
+  platformRole    PlatformRole? @map("platform_role")
+  locale          String        @default("es-PE")
+  lastLoginAt     DateTime?     @map("last_login_at") @db.Timestamptz(6)
+  /// Cuándo confirmó que el correo es suyo (link de verificación o restablecer la contraseña).
+  emailVerifiedAt DateTime?     @map("email_verified_at") @db.Timestamptz(6)
+  /// Aceptó los Términos y la Política de privacidad (Ley 29733) al registrarse.
+  termsAcceptedAt DateTime?     @map("terms_accepted_at") @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  memberships Membership[]
+  sessions    AuthSession[]
+  authTokens  AuthToken[]
+  customers   Customer[]
+
+  @@map("users")
+}
+
+/// Refresh tokens del proveedor de auth local (rotación + revocación).
+model AuthSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  userAgent String?   @map("user_agent")
+  ip        String?
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+enum AuthTokenKind {
+  password_reset
+  email_verify
+
+  @@map("auth_token_kind")
+}
+
+/// Tokens de un solo uso enviados por correo (recuperar contraseña, verificar correo). Solo el hash.
+model AuthToken {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  kind      AuthTokenKind
+  tokenHash String        @unique @map("token_hash")
+  expiresAt DateTime      @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime?     @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, kind])
+  @@map("auth_tokens")
+}
+
+enum ComplaintKind {
+  reclamo
+  queja
+
+  @@map("complaint_kind")
+}
+
+enum ComplaintStatus {
+  pending
+  answered
+
+  @@map("complaint_status")
+}
+
+/// Libro de Reclamaciones virtual (INDECOPI). barbershopId null = el libro de Cognira (la plataforma).
+/// Los datos del proveedor se copian al crear la hoja: es un registro legal que no cambia.
+model Complaint {
+  id              String          @id @default(uuid()) @db.Uuid
+  barbershopId    String?         @map("barbershop_id") @db.Uuid
+  /// Correlativo por libro (1, 2, 3…).
+  seq             Int
+  kind            ComplaintKind
+  providerName    String          @map("provider_name")
+  providerTaxId   String?         @map("provider_tax_id")
+  providerAddress String?         @map("provider_address")
+  consumerName    String          @map("consumer_name")
+  docType         String          @map("doc_type")
+  docNumber       String          @map("doc_number")
+  consumerAddress String?         @map("consumer_address")
+  consumerPhone   String?         @map("consumer_phone")
+  consumerEmail   String          @map("consumer_email")
+  /// Menor de edad: nombre del padre, madre o apoderado.
+  guardianName    String?         @map("guardian_name")
+  itemType        String          @map("item_type")
+  itemDescription String          @map("item_description")
+  amountCents     Int?            @map("amount_cents")
+  detail          String
+  request         String
+  status          ComplaintStatus @default(pending)
+  response        String?
+  respondedAt     DateTime?       @map("responded_at") @db.Timestamptz(6)
+  respondedBy     String?         @map("responded_by") @db.Uuid
+  /// Vence a los 15 días hábiles (Código de Protección y Defensa del Consumidor).
+  dueAt           DateTime        @map("due_at") @db.Timestamptz(6)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  barbershop Barbershop? @relation(fields: [barbershopId], references: [id])
+
+  @@index([barbershopId, status])
+  @@map("complaints")
+}
+
+// ───────────────────────────── Tenant ─────────────────────────────
+
+model Barbershop {
+  id                     String             @id @default(uuid()) @db.Uuid
+  slug                   String
+  name                   String
+  description            String?
+  legalName              String?            @map("legal_name")
+  taxId                  String?            @map("tax_id")
+  category               BarbershopCategory @default(barbershop)
+  status                 BarbershopStatus   @default(onboarding)
+  country                String             @default("PE") @db.Char(2)
+  timezone               String             @default("America/Lima")
+  currency               String             @default("PEN") @db.Char(3)
+  locale                 String             @default("es-PE")
+  phone                  String?
+  email                  String?
+  customDomain           String?            @map("custom_domain")
+  /// Valor del TXT _cognira-verify.<dominio> que prueba que el dominio es de la barbería.
+  customDomainToken      String?            @map("custom_domain_token")
+  /// null = pendiente; con fecha = verificado (Caddy emite el certificado y la web lo resuelve).
+  customDomainVerifiedAt DateTime?          @map("custom_domain_verified_at") @db.Timestamptz(6)
+  customDomainCheckedAt  DateTime?          @map("custom_domain_checked_at") @db.Timestamptz(6)
+  customDomainError      String?            @map("custom_domain_error")
+  /// Tipado con Zod en el backend (BrandingSchema).
+  branding               Json               @default("{}")
+  /// { currentStep, completedSteps[], dismissed }
+  onboarding             Json               @default("{}")
+  suspendedAt            DateTime?          @map("suspended_at") @db.Timestamptz(6)
+  /// manual (lo suspendió el superadmin) | billing (cobranza: se reactiva sola al pagar).
+  suspendedReason        String?            @map("suspended_reason")
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt              DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  settings           BarbershopSettings?
+  subscription       Subscription?
+  invoices           Invoice[]
+  locations          Location[]
+  memberships        Membership[]
+  staff              Staff[]
+  businessHours      BusinessHour[]
+  holidays           Holiday[]
+  scheduleExceptions ScheduleException[]
+  staffHours         StaffHour[]
+  staffTimeOff       StaffTimeOff[]
+  serviceCategories  ServiceCategory[]
+  services           Service[]
+  staffServices      StaffService[]
+  customers          Customer[]
+  customerNotes      CustomerNote[]
+  appointments       Appointment[]
+  appointmentItems   AppointmentService[]
+  complaints         Complaint[]
+  whatsappConfig     WhatsappConfig?
+  messageTemplates   MessageTemplate[]
+  messageLogs        MessageLog[]
+  auditLogs          AuditLog[]
+  usageCounters      UsageCounter[]
+  galleryImages      GalleryImage[]
+  files              StoredFile[]
+  shopRoles          ShopRole[]
+  products           Product[]
+  productStocks      ProductStock[]
+  inventoryMovements InventoryMovement[]
+  cashRegisters      CashRegister[]
+  cashShifts         CashShift[]
+  cashMovements      CashMovement[]
+  sales              Sale[]
+  saleItems          SaleItem[]
+  salePayments       SalePayment[]
+  commissionEntries  CommissionEntry[]
+  commissionPayouts  CommissionPayout[]
+  gatewayAccounts    PaymentGatewayAccount[]
+  invoiceCharges     InvoiceCharge[]
+  deposits           AppointmentDeposit[]
+  billingNotices     BillingNotice[]
+  paymentCharges     PaymentCharge[]
+  paymentRefunds     PaymentRefund[]
+
+  @@index([status])
+  @@map("barbershops")
+}
+
+model BarbershopSettings {
+  barbershopId   String   @id @map("barbershop_id") @db.Uuid
+  bookingRules   Json     @default("{}") @map("booking_rules")
+  notifications  Json     @default("{}")
+  permissions    Json     @default("{}")
+  publicPage     Json     @default("{}") @map("public_page")
+  /// { dateFormat, timeFormat, weekStartsOn } — locale/zona/moneda viven en barbershops
+  preferences    Json     @default("{}")
+  schemaVersion  Int      @default(1) @map("schema_version")
+  /// Último correlativo de venta usado (V-000123).
+  lastSaleNumber Int      @default(0) @map("last_sale_number")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+
+  @@map("barbershop_settings")
+}
+
+model GalleryImage {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  url          String
+  caption      String?
+  sortOrder    Int       @default(0) @map("sort_order")
+  isVisible    Boolean   @default(true) @map("is_visible")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+
+  @@index([barbershopId, sortOrder])
+  @@map("gallery_images")
+}
+
+model Location {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  name         String
+  address      String?
+  reference    String?
+  lat          Float?
+  lng          Float?
+  phone        String?
+  timezone     String?
+  isPrimary    Boolean   @default(false) @map("is_primary")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop         Barbershop          @relation(fields: [barbershopId], references: [id])
+  businessHours      BusinessHour[]
+  holidays           Holiday[]
+  scheduleExceptions ScheduleException[]
+  staff              Staff[]
+  appointments       Appointment[]
+  productStocks      ProductStock[]
+  inventoryMovements InventoryMovement[]
+  cashRegisters      CashRegister[]
+  sales              Sale[]
+
+  @@index([barbershopId])
+  @@map("locations")
+}
+
+model Membership {
+  id              String           @id @default(uuid()) @db.Uuid
+  barbershopId    String           @map("barbershop_id") @db.Uuid
+  userId          String?          @map("user_id") @db.Uuid
+  role            MemberRole
+  permissions     Json             @default("{}")
+  status          MembershipStatus @default(invited)
+  inviteEmail     String?          @map("invite_email")
+  /// SHA-256 del token de invitación (el token en claro nunca se guarda)
+  inviteToken     String?          @unique @map("invite_token")
+  inviteExpiresAt DateTime?        @map("invite_expires_at") @db.Timestamptz(6)
+  invitedByUserId String?          @map("invited_by_user_id") @db.Uuid
+  /// Rol personalizado (Fase 2). Si está, sus permisos reemplazan a los del rol base (`role`).
+  customRoleId    String?          @map("custom_role_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop     @relation(fields: [barbershopId], references: [id])
+  user       User?          @relation(fields: [userId], references: [id])
+  customRole ShopRole?      @relation(fields: [customRoleId], references: [id])
+  staff      Staff?
+  notes      CustomerNote[]
+
+  @@index([barbershopId])
+  @@index([userId])
+  @@index([customRoleId])
+  @@map("memberships")
+}
+
+/// Rol creado por la barbería ("Cajero", "Encargado de sede"…). `baseRole` define la jerarquía
+/// (quién puede gestionar a quién, si puede tener perfil de barbero); `permissions`, qué puede hacer.
+model ShopRole {
+  id           String     @id @default(uuid()) @db.Uuid
+  barbershopId String     @map("barbershop_id") @db.Uuid
+  name         String
+  description  String?
+  baseRole     MemberRole @map("base_role")
+  permissions  String[]   @default([])
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop  Barbershop   @relation(fields: [barbershopId], references: [id])
+  memberships Membership[]
+
+  @@index([barbershopId])
+  @@map("shop_roles")
+}
+
+// ───────────────────────────── Staff ─────────────────────────────
+
+model Staff {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  membershipId String?   @unique @map("membership_id") @db.Uuid
+  locationId   String?   @map("location_id") @db.Uuid
+  displayName  String    @map("display_name")
+  bio          String?
+  photoUrl     String?   @map("photo_url")
+  specialties  String[]  @default([])
+  socials      Json      @default("{}")
+  /// Fase 2: { type: 'percent'|'fixed'|'mixed', servicePercent, fixedCents, productPercent }
+  commission   Json      @default("{}")
+  /// false = trabaja el horario de su sede (sus filas staff_hours tipo 'work' se ignoran); los descansos aplican siempre.
+  customHours  Boolean   @default(false) @map("custom_hours")
+  isActive     Boolean   @default(true) @map("is_active")
+  sortOrder    Int       @default(0) @map("sort_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop        Barbershop         @relation(fields: [barbershopId], references: [id])
+  membership        Membership?        @relation(fields: [membershipId], references: [id])
+  location          Location?          @relation(fields: [locationId], references: [id])
+  hours             StaffHour[]
+  timeOff           StaffTimeOff[]
+  services          StaffService[]
+  appointments      Appointment[]
+  saleItems         SaleItem[]
+  commissionEntries CommissionEntry[]
+  commissionPayouts CommissionPayout[]
+
+  @@index([barbershopId, sortOrder])
+  @@map("staff")
+}
+
+// ─────────────────────────── Horarios ───────────────────────────
+
+/// Horario recurrente de la sede en hora LOCAL (se interpreta con la zona horaria de la sede).
+model BusinessHour {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  locationId   String    @map("location_id") @db.Uuid
+  dayOfWeek    Int       @map("day_of_week") @db.SmallInt
+  opensAt      DateTime  @map("opens_at") @db.Time(0)
+  closesAt     DateTime  @map("closes_at") @db.Time(0)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  location   Location   @relation(fields: [locationId], references: [id])
+
+  @@index([barbershopId, locationId, dayOfWeek])
+  @@map("business_hours")
+}
+
+model Holiday {
+  id           String        @id @default(uuid()) @db.Uuid
+  barbershopId String        @map("barbershop_id") @db.Uuid
+  locationId   String?       @map("location_id") @db.Uuid
+  date         DateTime      @db.Date
+  name         String
+  source       HolidaySource @default(manual)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  location   Location?  @relation(fields: [locationId], references: [id])
+
+  @@index([barbershopId, date])
+  @@map("holidays")
+}
+
+model ScheduleException {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  locationId   String    @map("location_id") @db.Uuid
+  date         DateTime  @db.Date
+  isClosed     Boolean   @default(false) @map("is_closed")
+  opensAt      DateTime? @map("opens_at") @db.Time(0)
+  closesAt     DateTime? @map("closes_at") @db.Time(0)
+  reason       String?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  location   Location   @relation(fields: [locationId], references: [id])
+
+  @@index([barbershopId, locationId, date])
+  @@map("schedule_exceptions")
+}
+
+model StaffHour {
+  id           String        @id @default(uuid()) @db.Uuid
+  barbershopId String        @map("barbershop_id") @db.Uuid
+  staffId      String        @map("staff_id") @db.Uuid
+  dayOfWeek    Int           @map("day_of_week") @db.SmallInt
+  startsAt     DateTime      @map("starts_at") @db.Time(0)
+  endsAt       DateTime      @map("ends_at") @db.Time(0)
+  kind         StaffHourKind @default(work)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?     @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  staff      Staff      @relation(fields: [staffId], references: [id])
+
+  @@index([barbershopId, staffId, dayOfWeek])
+  @@map("staff_hours")
+}
+
+model StaffTimeOff {
+  id           String      @id @default(uuid()) @db.Uuid
+  barbershopId String      @map("barbershop_id") @db.Uuid
+  staffId      String      @map("staff_id") @db.Uuid
+  startsAt     DateTime    @map("starts_at") @db.Timestamptz(6)
+  endsAt       DateTime    @map("ends_at") @db.Timestamptz(6)
+  kind         TimeOffKind @default(absence)
+  reason       String?
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  staff      Staff      @relation(fields: [staffId], references: [id])
+
+  @@index([barbershopId, staffId, startsAt])
+  @@map("staff_time_off")
+}
+
+// ─────────────────────────── Servicios ───────────────────────────
+
+model ServiceCategory {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  name         String
+  sortOrder    Int       @default(0) @map("sort_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  services   Service[]
+
+  @@index([barbershopId, sortOrder])
+  @@map("service_categories")
+}
+
+model Service {
+  id               String    @id @default(uuid()) @db.Uuid
+  barbershopId     String    @map("barbershop_id") @db.Uuid
+  categoryId       String?   @map("category_id") @db.Uuid
+  name             String
+  description      String?
+  imageUrl         String?   @map("image_url")
+  priceCents       Int       @map("price_cents")
+  durationMin      Int       @map("duration_min")
+  bufferBeforeMin  Int       @default(0) @map("buffer_before_min")
+  bufferAfterMin   Int       @default(0) @map("buffer_after_min")
+  isOnlineBookable Boolean   @default(true) @map("is_online_bookable")
+  isActive         Boolean   @default(true) @map("is_active")
+  sortOrder        Int       @default(0) @map("sort_order")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop       Barbershop           @relation(fields: [barbershopId], references: [id])
+  category         ServiceCategory?     @relation(fields: [categoryId], references: [id])
+  staffServices    StaffService[]
+  appointmentItems AppointmentService[]
+
+  /// Excepción del adelanto { required, type, value } (null = regla general).
+  depositOverride Json? @map("deposit_override")
+
+  @@index([barbershopId, sortOrder])
+  @@map("services")
+}
+
+/// Qué servicios hace cada barbero, con precio/duración propios opcionales.
+model StaffService {
+  barbershopId        String   @map("barbershop_id") @db.Uuid
+  staffId             String   @map("staff_id") @db.Uuid
+  serviceId           String   @map("service_id") @db.Uuid
+  priceCentsOverride  Int?     @map("price_cents_override")
+  durationMinOverride Int?     @map("duration_min_override")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  staff      Staff      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  service    Service    @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([staffId, serviceId])
+  @@index([barbershopId])
+  @@map("staff_services")
+}
+
+// ─────────────────────────── Clientes ───────────────────────────
+
+model Customer {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  userId       String?   @map("user_id") @db.Uuid
+  fullName     String    @map("full_name")
+  phoneE164    String?   @map("phone_e164")
+  email        String?
+  birthday     DateTime? @db.Date
+  tags         String[]  @default([])
+  isBlocked    Boolean   @default(false) @map("is_blocked")
+  noShowCount  Int       @default(0) @map("no_show_count")
+  waOptIn      Boolean   @default(true) @map("wa_opt_in")
+  lastVisitAt  DateTime? @map("last_visit_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop   Barbershop     @relation(fields: [barbershopId], references: [id])
+  user         User?          @relation(fields: [userId], references: [id])
+  notes        CustomerNote[]
+  appointments Appointment[]
+  messageLogs  MessageLog[]
+  sales        Sale[]
+
+  @@index([barbershopId, fullName])
+  @@index([userId])
+  @@map("customers")
+}
+
+model CustomerNote {
+  id                 String    @id @default(uuid()) @db.Uuid
+  barbershopId       String    @map("barbershop_id") @db.Uuid
+  customerId         String    @map("customer_id") @db.Uuid
+  authorMembershipId String?   @map("author_membership_id") @db.Uuid
+  body               String
+  /// Foto del corte (subida con kind=customer)
+  imageUrl           String?   @map("image_url")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop  @relation(fields: [barbershopId], references: [id])
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  author     Membership? @relation(fields: [authorMembershipId], references: [id])
+
+  @@index([barbershopId, customerId])
+  @@map("customer_notes")
+}
+
+// ───────────────────────────── Citas ─────────────────────────────
+
+model Appointment {
+  id                String            @id @default(uuid()) @db.Uuid
+  barbershopId      String            @map("barbershop_id") @db.Uuid
+  locationId        String            @map("location_id") @db.Uuid
+  staffId           String            @map("staff_id") @db.Uuid
+  customerId        String?           @map("customer_id") @db.Uuid
+  startAt           DateTime          @map("start_at") @db.Timestamptz(6)
+  endAt             DateTime          @map("end_at") @db.Timestamptz(6)
+  /// start_at − buffer previo. Lo usa la exclusion constraint anti doble reserva.
+  blockStartAt      DateTime          @map("block_start_at") @db.Timestamptz(6)
+  /// end_at + buffer posterior.
+  blockEndAt        DateTime          @map("block_end_at") @db.Timestamptz(6)
+  status            AppointmentStatus @default(pending)
+  source            AppointmentSource @default(online)
+  totalCents        Int               @default(0) @map("total_cents")
+  currency          String            @default("PEN") @db.Char(3)
+  customerNotes     String?           @map("customer_notes")
+  internalNotes     String?           @map("internal_notes")
+  customFields      Json              @default("{}") @map("custom_fields")
+  manageTokenHash   String?           @unique @map("manage_token_hash")
+  rescheduledFromId String?           @map("rescheduled_from_id") @db.Uuid
+  createdByUserId   String?           @map("created_by_user_id") @db.Uuid
+  confirmedAt       DateTime?         @map("confirmed_at") @db.Timestamptz(6)
+  startedAt         DateTime?         @map("started_at") @db.Timestamptz(6)
+  completedAt       DateTime?         @map("completed_at") @db.Timestamptz(6)
+  canceledAt        DateTime?         @map("canceled_at") @db.Timestamptz(6)
+  cancelReason      String?           @map("cancel_reason")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?         @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop      Barbershop           @relation(fields: [barbershopId], references: [id])
+  location        Location             @relation(fields: [locationId], references: [id])
+  staff           Staff                @relation(fields: [staffId], references: [id])
+  customer        Customer?            @relation(fields: [customerId], references: [id])
+  rescheduledFrom Appointment?         @relation("Reschedules", fields: [rescheduledFromId], references: [id])
+  rescheduledTo   Appointment[]        @relation("Reschedules")
+  items           AppointmentService[]
+  messageLogs     MessageLog[]
+  sales           Sale[]
+  deposit         AppointmentDeposit?
+
+  @@index([barbershopId, startAt])
+  @@index([barbershopId, staffId, startAt])
+  @@index([barbershopId, customerId])
+  @@map("appointments")
+}
+
+model AppointmentService {
+  id            String   @id @default(uuid()) @db.Uuid
+  barbershopId  String   @map("barbershop_id") @db.Uuid
+  appointmentId String   @map("appointment_id") @db.Uuid
+  serviceId     String   @map("service_id") @db.Uuid
+  nameSnapshot  String   @map("name_snapshot")
+  priceCents    Int      @map("price_cents")
+  durationMin   Int      @map("duration_min")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop  Barbershop  @relation(fields: [barbershopId], references: [id])
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id])
+
+  @@index([barbershopId, appointmentId])
+  @@map("appointment_services")
+}
+
+// ───────────────────────── Mensajería ─────────────────────────
+
+model WhatsappConfig {
+  barbershopId   String            @id @map("barbershop_id") @db.Uuid
+  provider       MessagingProvider @default(platform)
+  /// AES-256-GCM: iv(12) | tag(16) | ciphertext
+  credentialsEnc Bytes?            @map("credentials_enc")
+  keyVersion     Int               @default(1) @map("key_version") @db.SmallInt
+  displayPhone   String?           @map("display_phone")
+  status         ConnectionStatus  @default(unverified)
+  lastError      String?           @map("last_error")
+  verifiedAt     DateTime?         @map("verified_at") @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+
+  @@map("whatsapp_configs")
+}
+
+model MessageTemplate {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  /// null = plantilla global de la plataforma
+  barbershopId         String?                @map("barbershop_id") @db.Uuid
+  event                MessageEvent
+  channel              MessageChannel
+  locale               String                 @default("es")
+  subject              String?
+  body                 String
+  providerTemplateName String?                @map("provider_template_name")
+  providerStatus       ProviderTemplateStatus @default(n_a) @map("provider_status")
+  isEnabled            Boolean                @default(true) @map("is_enabled")
+  createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt            DateTime?              @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop  Barbershop?  @relation(fields: [barbershopId], references: [id])
+  messageLogs MessageLog[]
+
+  @@index([barbershopId, event, channel])
+  @@map("message_templates")
+}
+
+model MessageLog {
+  id                String         @id @default(uuid()) @db.Uuid
+  barbershopId      String         @map("barbershop_id") @db.Uuid
+  appointmentId     String?        @map("appointment_id") @db.Uuid
+  customerId        String?        @map("customer_id") @db.Uuid
+  templateId        String?        @map("template_id") @db.Uuid
+  event             MessageEvent
+  channel           MessageChannel
+  provider          String
+  to                String
+  body              String?
+  providerMessageId String?        @unique @map("provider_message_id")
+  status            MessageStatus  @default(queued)
+  error             String?
+  scheduledFor      DateTime?      @map("scheduled_for") @db.Timestamptz(6)
+  sentAt            DateTime?      @map("sent_at") @db.Timestamptz(6)
+  deliveredAt       DateTime?      @map("delivered_at") @db.Timestamptz(6)
+  readAt            DateTime?      @map("read_at") @db.Timestamptz(6)
+  /// Evita enviar dos veces el mismo mensaje (p. ej. "reminder:24:<appointmentId>:<inicio>").
+  dedupeKey         String?        @map("dedupe_key")
+  /// customer | staff
+  recipientKind     String         @default("customer") @map("recipient_kind")
+  attempts          Int            @default(0)
+  lockedAt          DateTime?      @map("locked_at") @db.Timestamptz(6)
+  /// Enlace wa.me prellenado (proveedor manual)
+  actionUrl         String?        @map("action_url")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop  Barbershop       @relation(fields: [barbershopId], references: [id])
+  appointment Appointment?     @relation(fields: [appointmentId], references: [id])
+  customer    Customer?        @relation(fields: [customerId], references: [id])
+  template    MessageTemplate? @relation(fields: [templateId], references: [id])
+
+  @@unique([barbershopId, dedupeKey])
+  @@index([barbershopId, createdAt])
+  @@index([status, scheduledFor])
+  @@map("message_logs")
+}
+
+// ─────────────────────── Operación / auditoría ───────────────────────
+
+model AuditLog {
+  id                 String   @id @default(uuid()) @db.Uuid
+  barbershopId       String?  @map("barbershop_id") @db.Uuid
+  actorUserId        String?  @map("actor_user_id") @db.Uuid
+  impersonatorUserId String?  @map("impersonator_user_id") @db.Uuid
+  action             String
+  entity             String?
+  entityId           String?  @map("entity_id")
+  diff               Json?
+  ip                 String?
+  userAgent          String?  @map("user_agent")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  barbershop Barbershop? @relation(fields: [barbershopId], references: [id])
+
+  @@index([barbershopId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}
+
+/// Contadores de uso por período (YYYY-MM) para aplicar los límites del plan.
+model UsageCounter {
+  barbershopId String   @map("barbershop_id") @db.Uuid
+  period       String
+  metric       String
+  count        Int      @default(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+
+  @@id([barbershopId, period, metric])
+  @@map("usage_counters")
+}
+
+/// Archivos subidos (logos, banners, fotos). Sirve para cuota de almacenamiento y limpieza.
+model StoredFile {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  key          String    @unique
+  kind         String
+  contentType  String    @map("content_type")
+  sizeBytes    Int       @map("size_bytes")
+  uploadedById String?   @map("uploaded_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+
+  @@index([barbershopId, createdAt])
+  @@map("stored_files")
+}
+
+// ─────────────────────── Productos e inventario (Fase 2) ───────────────────────
+
+enum InventoryMovementKind {
+  purchase
+  sale
+  adjustment
+  return
+
+  @@map("inventory_movement_kind")
+}
+
+/// Productos que la barbería vende o usa (ceras, shampoo, aceites…). Stock por sede en ProductStock.
+model Product {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  name         String
+  sku          String?
+  barcode      String?
+  category     String?
+  description  String?
+  imageUrl     String?   @map("image_url")
+  priceCents   Int       @map("price_cents")
+  /// Costo de referencia (último costo de compra); para el margen.
+  costCents    Int       @default(0) @map("cost_cents")
+  /// Aviso de "stock bajo" cuando la cantidad en una sede queda en este valor o menos.
+  stockMin     Int       @default(0) @map("stock_min")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop          @relation(fields: [barbershopId], references: [id])
+  stocks     ProductStock[]
+  movements  InventoryMovement[]
+
+  @@index([barbershopId, name])
+  @@map("products")
+}
+
+model ProductStock {
+  barbershopId String   @map("barbershop_id") @db.Uuid
+  productId    String   @map("product_id") @db.Uuid
+  locationId   String   @map("location_id") @db.Uuid
+  quantity     Int      @default(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  product    Product    @relation(fields: [productId], references: [id])
+  location   Location   @relation(fields: [locationId], references: [id])
+
+  @@id([productId, locationId])
+  @@index([barbershopId])
+  @@map("product_stocks")
+}
+
+/// Libro de movimientos (no se edita ni se borra): compra, venta, ajuste o devolución.
+model InventoryMovement {
+  id              String                @id @default(uuid()) @db.Uuid
+  barbershopId    String                @map("barbershop_id") @db.Uuid
+  productId       String                @map("product_id") @db.Uuid
+  locationId      String                @map("location_id") @db.Uuid
+  kind            InventoryMovementKind
+  /// Con signo: + entra, − sale.
+  quantity        Int
+  /// Stock de la sede después del movimiento.
+  balance         Int
+  unitCostCents   Int?                  @map("unit_cost_cents")
+  saleId          String?               @map("sale_id") @db.Uuid
+  note            String?
+  createdByUserId String?               @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  product    Product    @relation(fields: [productId], references: [id])
+  location   Location   @relation(fields: [locationId], references: [id])
+
+  @@index([barbershopId, createdAt])
+  @@index([productId, createdAt])
+  @@map("inventory_movements")
+}
+
+// ─────────────────────────────── Caja (Fase 2) ───────────────────────────────
+
+enum CashMovementKind {
+  income
+  expense
+  withdrawal
+  sale
+  refund
+
+  @@map("cash_movement_kind")
+}
+
+enum PaymentMethod {
+  cash
+  yape
+  plin
+  card
+  transfer
+  other
+  /// Cobro por link o QR de la pasarela de la barbería (Fase 2 · paso 25).
+  online
+
+  @@map("payment_method")
+}
+
+/// Caja de una sede ("Caja principal"). Se crea sola la primera vez que se usa.
+model CashRegister {
+  id           String    @id @default(uuid()) @db.Uuid
+  barbershopId String    @map("barbershop_id") @db.Uuid
+  locationId   String    @map("location_id") @db.Uuid
+  name         String
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop  @relation(fields: [barbershopId], references: [id])
+  location   Location    @relation(fields: [locationId], references: [id])
+  shifts     CashShift[]
+
+  @@index([barbershopId])
+  @@map("cash_registers")
+}
+
+/// Turno de caja: apertura con fondo → movimientos → cierre con arqueo por método.
+model CashShift {
+  id              String    @id @default(uuid()) @db.Uuid
+  barbershopId    String    @map("barbershop_id") @db.Uuid
+  registerId      String    @map("register_id") @db.Uuid
+  openedByUserId  String    @map("opened_by_user_id") @db.Uuid
+  openedAt        DateTime  @default(now()) @map("opened_at") @db.Timestamptz(6)
+  openingCents    Int       @map("opening_cents")
+  closedByUserId  String?   @map("closed_by_user_id") @db.Uuid
+  closedAt        DateTime? @map("closed_at") @db.Timestamptz(6)
+  /// Al cerrar: { cash: 12000, yape: 4500, … } esperado y contado por método.
+  expected        Json?
+  counted         Json?
+  /// Diferencia total (contado − esperado); negativo = faltante.
+  differenceCents Int?      @map("difference_cents")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop     @relation(fields: [barbershopId], references: [id])
+  register   CashRegister   @relation(fields: [registerId], references: [id])
+  movements  CashMovement[]
+
+  @@index([barbershopId, openedAt])
+  @@map("cash_shifts")
+}
+
+/// Movimiento de caja. Montos siempre positivos; el signo lo da el tipo (sale/income suman).
+model CashMovement {
+  id              String           @id @default(uuid()) @db.Uuid
+  barbershopId    String           @map("barbershop_id") @db.Uuid
+  shiftId         String           @map("shift_id") @db.Uuid
+  kind            CashMovementKind
+  method          PaymentMethod
+  amountCents     Int              @map("amount_cents")
+  concept         String
+  saleId          String?          @map("sale_id") @db.Uuid
+  createdByUserId String?          @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  shift      CashShift  @relation(fields: [shiftId], references: [id])
+
+  @@index([shiftId, createdAt])
+  @@index([barbershopId, createdAt])
+  @@map("cash_movements")
+}
+
+// ───────────────────────────── Ventas / POS (Fase 2) ─────────────────────────────
+
+enum SaleStatus {
+  completed
+  voided
+
+  @@map("sale_status")
+}
+
+enum SaleItemKind {
+  service
+  product
+
+  @@map("sale_item_kind")
+}
+
+/// Venta (nota de venta / ticket interno). No se edita: se anula con motivo.
+model Sale {
+  id              String     @id @default(uuid()) @db.Uuid
+  barbershopId    String     @map("barbershop_id") @db.Uuid
+  locationId      String     @map("location_id") @db.Uuid
+  shiftId         String?    @map("shift_id") @db.Uuid
+  /// Correlativo por barbería (V-000123), sin huecos.
+  number          Int
+  customerId      String?    @map("customer_id") @db.Uuid
+  appointmentId   String?    @map("appointment_id") @db.Uuid
+  status          SaleStatus @default(completed)
+  subtotalCents   Int        @map("subtotal_cents")
+  discountCents   Int        @default(0) @map("discount_cents")
+  tipCents        Int        @default(0) @map("tip_cents")
+  /// Barbero que recibe la propina (null = se reparte según los ítems).
+  tipStaffId      String?    @map("tip_staff_id") @db.Uuid
+  totalCents      Int        @map("total_cents")
+  notes           String?
+  createdByUserId String?    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  voidedAt        DateTime?  @map("voided_at") @db.Timestamptz(6)
+  voidedByUserId  String?    @map("voided_by_user_id") @db.Uuid
+  voidReason      String?    @map("void_reason")
+
+  barbershop  Barbershop           @relation(fields: [barbershopId], references: [id])
+  location    Location             @relation(fields: [locationId], references: [id])
+  customer    Customer?            @relation(fields: [customerId], references: [id])
+  appointment Appointment?         @relation(fields: [appointmentId], references: [id])
+  items       SaleItem[]
+  payments    SalePayment[]
+  charge      PaymentCharge?
+  deposits    AppointmentDeposit[]
+  refunds     PaymentRefund[]
+
+  @@unique([barbershopId, number])
+  @@index([barbershopId, createdAt])
+  @@index([customerId])
+  @@map("sales")
+}
+
+model SaleItem {
+  id             String       @id @default(uuid()) @db.Uuid
+  barbershopId   String       @map("barbershop_id") @db.Uuid
+  saleId         String       @map("sale_id") @db.Uuid
+  kind           SaleItemKind
+  serviceId      String?      @map("service_id") @db.Uuid
+  productId      String?      @map("product_id") @db.Uuid
+  /// Quién lo atendió/vendió (para las comisiones).
+  staffId        String?      @map("staff_id") @db.Uuid
+  name           String
+  quantity       Int
+  unitPriceCents Int          @map("unit_price_cents")
+  discountCents  Int          @default(0) @map("discount_cents")
+  totalCents     Int          @map("total_cents")
+  sortOrder      Int          @default(0) @map("sort_order")
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  sale       Sale       @relation(fields: [saleId], references: [id])
+  staff      Staff?     @relation(fields: [staffId], references: [id])
+
+  @@index([saleId])
+  @@index([barbershopId, staffId])
+  @@map("sale_items")
+}
+
+model SalePayment {
+  id           String        @id @default(uuid()) @db.Uuid
+  barbershopId String        @map("barbershop_id") @db.Uuid
+  saleId       String        @map("sale_id") @db.Uuid
+  method       PaymentMethod
+  amountCents  Int           @map("amount_cents")
+  reference    String?
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  sale       Sale       @relation(fields: [saleId], references: [id])
+
+  @@index([saleId])
+  @@map("sale_payments")
+}
+
+// ───────────────────────────── Comisiones (Fase 2) ─────────────────────────────
+
+enum CommissionKind {
+  service
+  product
+  tip
+
+  @@map("commission_kind")
+}
+
+/// Comisión ganada por un ítem cobrado (o propina). Inmutable: al anular la venta se agrega
+/// una entrada negativa (`reversalOfId`). `payoutId` = ya liquidada.
+model CommissionEntry {
+  id           String         @id @default(uuid()) @db.Uuid
+  barbershopId String         @map("barbershop_id") @db.Uuid
+  staffId      String         @map("staff_id") @db.Uuid
+  saleId       String         @map("sale_id") @db.Uuid
+  saleItemId   String?        @map("sale_item_id") @db.Uuid
+  kind         CommissionKind
+  description  String
+  baseCents    Int            @map("base_cents")
+  /// Regla aplicada (copia): { type: 'percent'|'fixed', value } — cambiarla después no altera lo ganado.
+  rule         Json
+  amountCents  Int            @map("amount_cents")
+  earnedAt     DateTime       @map("earned_at") @db.Timestamptz(6)
+  reversalOfId String?        @map("reversal_of_id") @db.Uuid
+  payoutId     String?        @map("payout_id") @db.Uuid
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id])
+  staff      Staff             @relation(fields: [staffId], references: [id])
+  payout     CommissionPayout? @relation(fields: [payoutId], references: [id])
+
+  @@index([barbershopId, staffId, earnedAt])
+  @@index([saleId])
+  @@index([payoutId])
+  @@map("commission_entries")
+}
+
+/// Liquidación (pago) de comisiones a un barbero: agrupa las entradas pendientes hasta `periodTo`.
+model CommissionPayout {
+  id              String        @id @default(uuid()) @db.Uuid
+  barbershopId    String        @map("barbershop_id") @db.Uuid
+  staffId         String        @map("staff_id") @db.Uuid
+  periodTo        DateTime      @map("period_to") @db.Timestamptz(6)
+  totalCents      Int           @map("total_cents")
+  entriesCount    Int           @map("entries_count")
+  method          PaymentMethod
+  note            String?
+  createdByUserId String?       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  barbershop Barbershop        @relation(fields: [barbershopId], references: [id])
+  staff      Staff             @relation(fields: [staffId], references: [id])
+  entries    CommissionEntry[]
+
+  @@index([barbershopId, staffId, createdAt])
+  @@map("commission_payouts")
+}
+
+// ───────────────────────────── Pagos en línea (Fase 2 · paso 25) ─────────────────────────────
+
+enum GatewayProvider {
+  simulator
+  mercadopago
+  izipay
+
+  @@map("gateway_provider")
+}
+
+enum ChargeStatus {
+  pending
+  paid
+  failed
+  expired
+  canceled
+
+  @@map("charge_status")
+}
+
+/// Pasarela propia de la barbería: el dinero va directo a SU cuenta. Credenciales cifradas (AES-256-GCM).
+model PaymentGatewayAccount {
+  id               String           @id @default(uuid()) @db.Uuid
+  barbershopId     String           @map("barbershop_id") @db.Uuid
+  provider         GatewayProvider
+  /// test = credenciales de prueba (sandbox); live = cobros reales.
+  mode             String           @default("test")
+  credentialsEnc   Bytes            @map("credentials_enc")
+  keyVersion       Int              @default(1) @map("key_version") @db.SmallInt
+  /// Lo que se puede mostrar (public key, cuenta) sin descifrar.
+  publicInfo       Json             @default("{}") @map("public_info")
+  /// SHA-256 del token de la URL del webhook (el token en claro solo se muestra al conectar).
+  webhookTokenHash String           @unique @map("webhook_token_hash")
+  isActive         Boolean          @default(true) @map("is_active")
+  status           ConnectionStatus @default(unverified)
+  lastError        String?          @map("last_error")
+  verifiedAt       DateTime?        @map("verified_at") @db.Timestamptz(6)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  barbershop Barbershop      @relation(fields: [barbershopId], references: [id])
+  charges    PaymentCharge[]
+
+  @@index([barbershopId])
+  @@map("payment_gateway_accounts")
+}
+
+/// Cobro por link/QR. Al pagarse se usa como pago "online" de una venta (una sola vez).
+model PaymentCharge {
+  id                String       @id @default(uuid()) @db.Uuid
+  barbershopId      String       @map("barbershop_id") @db.Uuid
+  accountId         String       @map("account_id") @db.Uuid
+  amountCents       Int          @map("amount_cents")
+  currency          String       @default("PEN") @db.Char(3)
+  description       String
+  status            ChargeStatus @default(pending)
+  /// Id del lado de la pasarela (preferencia de Mercado Pago…).
+  providerRef       String?      @map("provider_ref")
+  /// Id del pago aprobado (para conciliar y reembolsar).
+  providerPaymentId String?      @map("provider_payment_id")
+  checkoutUrl       String?      @map("checkout_url")
+  expiresAt         DateTime     @map("expires_at") @db.Timestamptz(6)
+  paidAt            DateTime?    @map("paid_at") @db.Timestamptz(6)
+  saleId            String?      @unique @map("sale_id") @db.Uuid
+  createdByUserId   String?      @map("created_by_user_id") @db.Uuid
+  lastEvent         Json?        @map("last_event")
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop            @relation(fields: [barbershopId], references: [id])
+  account    PaymentGatewayAccount @relation(fields: [accountId], references: [id])
+  sale       Sale?                 @relation(fields: [saleId], references: [id])
+  deposit    AppointmentDeposit?
+  refunds    PaymentRefund[]
+
+  @@index([barbershopId, createdAt])
+  @@map("payment_charges")
+}
+
+/// Pasarela de la PLATAFORMA (cobra la suscripción a las barberías). La configura el superadmin.
+model PlatformGateway {
+  id               String           @id @default(uuid()) @db.Uuid
+  provider         GatewayProvider
+  mode             String           @default("test")
+  credentialsEnc   Bytes            @map("credentials_enc")
+  keyVersion       Int              @default(1) @map("key_version") @db.SmallInt
+  publicInfo       Json             @default("{}") @map("public_info")
+  webhookTokenHash String           @unique @map("webhook_token_hash")
+  isActive         Boolean          @default(true) @map("is_active")
+  status           ConnectionStatus @default(unverified)
+  lastError        String?          @map("last_error")
+  verifiedAt       DateTime?        @map("verified_at") @db.Timestamptz(6)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  charges InvoiceCharge[]
+
+  @@map("platform_gateways")
+}
+
+/// Intento de pago en línea de una factura de suscripción.
+model InvoiceCharge {
+  id                String       @id @default(uuid()) @db.Uuid
+  barbershopId      String       @map("barbershop_id") @db.Uuid
+  invoiceId         String       @map("invoice_id") @db.Uuid
+  gatewayId         String       @map("gateway_id") @db.Uuid
+  amountCents       Int          @map("amount_cents")
+  currency          String       @db.Char(3)
+  status            ChargeStatus @default(pending)
+  providerRef       String?      @map("provider_ref")
+  providerPaymentId String?      @map("provider_payment_id")
+  checkoutUrl       String?      @map("checkout_url")
+  expiresAt         DateTime     @map("expires_at") @db.Timestamptz(6)
+  paidAt            DateTime?    @map("paid_at") @db.Timestamptz(6)
+  createdByUserId   String?      @map("created_by_user_id") @db.Uuid
+  lastEvent         Json?        @map("last_event")
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop      @relation(fields: [barbershopId], references: [id])
+  invoice    Invoice         @relation(fields: [invoiceId], references: [id])
+  gateway    PlatformGateway @relation(fields: [gatewayId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_charges")
+}
+
+// ───────────────────────────── Cobranza (Fase 2 · paso 26) ─────────────────────────────
+
+enum BillingNoticeKind {
+  invoice_issued
+  due_soon
+  overdue
+  final_warning
+  suspended
+  reactivated
+
+  @@map("billing_notice_kind")
+}
+
+/// Avisos de cobranza por correo: uno por factura y tipo (la tabla deduplica y hace de cola).
+model BillingNotice {
+  id           String            @id @default(uuid()) @db.Uuid
+  barbershopId String            @map("barbershop_id") @db.Uuid
+  invoiceId    String            @map("invoice_id") @db.Uuid
+  kind         BillingNoticeKind
+  /// email | whatsapp
+  channel      String            @default("email")
+  /// pending | sent | failed | skipped
+  status       String            @default("pending")
+  recipients   String[]          @default([])
+  error        String?
+  attempts     Int               @default(0)
+  sentAt       DateTime?         @map("sent_at") @db.Timestamptz(6)
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop Barbershop @relation(fields: [barbershopId], references: [id])
+  invoice    Invoice    @relation(fields: [invoiceId], references: [id])
+
+  @@unique([invoiceId, kind, channel])
+  @@index([status])
+  @@map("billing_notices")
+}
+
+// ───────────────────────────── Adelantos (Fase 3 · paso 28) ─────────────────────────────
+
+enum DepositStatus {
+  pending
+  paid
+  applied
+  refund_pending
+  refunded
+  retained
+  expired
+
+  @@map("deposit_status")
+}
+
+/// Adelanto de una reserva online, cobrado con la pasarela de la barbería (payment_charges).
+model AppointmentDeposit {
+  id            String        @id @default(uuid()) @db.Uuid
+  barbershopId  String        @map("barbershop_id") @db.Uuid
+  appointmentId String        @unique @map("appointment_id") @db.Uuid
+  chargeId      String?       @unique @map("charge_id") @db.Uuid
+  amountCents   Int           @map("amount_cents")
+  status        DepositStatus @default(pending)
+  /// Hasta cuándo se aparta el horario sin pagar.
+  holdExpiresAt DateTime      @map("hold_expires_at") @db.Timestamptz(6)
+  paidAt        DateTime?     @map("paid_at") @db.Timestamptz(6)
+  appliedSaleId String?       @map("applied_sale_id") @db.Uuid
+  resolvedAt    DateTime?     @map("resolved_at") @db.Timestamptz(6)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  barbershop  Barbershop      @relation(fields: [barbershopId], references: [id])
+  appointment Appointment     @relation(fields: [appointmentId], references: [id])
+  charge      PaymentCharge?  @relation(fields: [chargeId], references: [id])
+  appliedSale Sale?           @relation(fields: [appliedSaleId], references: [id])
+  refunds     PaymentRefund[]
+
+  @@index([status, holdExpiresAt])
+  @@map("appointment_deposits")
+}
+
+// ───────────────────────────── Devoluciones (Fase 3 · paso 31) ─────────────────────────────
+
+enum RefundStatus {
+  pending
+  succeeded
+  failed
+
+  @@map("refund_status")
+}
+
+/// Devolución de un cobro en línea por la pasarela de la barbería (la ejecuta el worker).
+model PaymentRefund {
+  id               String       @id @default(uuid()) @db.Uuid
+  barbershopId     String       @map("barbershop_id") @db.Uuid
+  chargeId         String       @map("charge_id") @db.Uuid
+  amountCents      Int          @map("amount_cents")
+  reason           String
+  status           RefundStatus @default(pending)
+  providerRefundId String?      @map("provider_refund_id")
+  error            String?
+  attempts         Int          @default(0)
+  nextAttemptAt    DateTime     @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  saleId           String?      @map("sale_id") @db.Uuid
+  depositId        String?      @map("deposit_id") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  completedAt      DateTime?    @map("completed_at") @db.Timestamptz(6)
+
+  barbershop Barbershop          @relation(fields: [barbershopId], references: [id])
+  charge     PaymentCharge       @relation(fields: [chargeId], references: [id])
+  sale       Sale?               @relation(fields: [saleId], references: [id])
+  deposit    AppointmentDeposit? @relation(fields: [depositId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@index([barbershopId, createdAt])
+  @@map("payment_refunds")
+}

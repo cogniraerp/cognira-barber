@@ -1,0 +1,34 @@
+diff --git a/dist/dto-CHeB-l1i.mjs b/dist/dto-CHeB-l1i.mjs
+index 71150dbea8fed02a5f524d4db5c0193bd77f0e65..ade8cf60756d0589285cfcda451748a8df7e39b9 100644
+--- a/dist/dto-CHeB-l1i.mjs
++++ b/dist/dto-CHeB-l1i.mjs
+@@ -339,8 +339,11 @@ function openApiMetadataFactory({ schema, io }) {
+ 	for (const [propertyKey, propertySchema] of Object.entries(jsonSchema.properties || {})) {
+ 		const newPropertySchema = {
+ 			...propertySchema,
+-			type: propertySchema.type || ""
++			type: typeof propertySchema.type === "string" ? propertySchema.type : ""
+ 		};
++		// [barbersaas patch] @nestjs/swagger interpreta `type: [T, "null"]` como "array de T":
++		// se pasa vacío y se conserva el original para restaurarlo después (ver src/swagger.ts).
++		if (Array.isArray(propertySchema.type)) newPropertySchema["x-original-type"] = propertySchema.type;
+ 		if (usesThreePointOneSyntax) newPropertySchema[USES_THREE_POINT_ONE_SYNTAX_KEY] = true;
+ 		if (hasRefs) newPropertySchema[PARENT_HAS_REFS_KEY] = true;
+ 		if (typeof propertySchema.type !== "string") newPropertySchema[EMPTY_TYPE_KEY] = true;
+diff --git a/dist/dto-sWxCeI9D.cjs b/dist/dto-sWxCeI9D.cjs
+index b01e7e7d7ca3fc93a9eb88857d715ba409edfe96..48f358633d8c288dbc8d8645855dacc9ffd04ce4 100644
+--- a/dist/dto-sWxCeI9D.cjs
++++ b/dist/dto-sWxCeI9D.cjs
+@@ -362,8 +362,11 @@ function openApiMetadataFactory({ schema, io }) {
+ 	for (const [propertyKey, propertySchema] of Object.entries(jsonSchema.properties || {})) {
+ 		const newPropertySchema = {
+ 			...propertySchema,
+-			type: propertySchema.type || ""
++			type: typeof propertySchema.type === "string" ? propertySchema.type : ""
+ 		};
++		// [barbersaas patch] @nestjs/swagger interpreta `type: [T, "null"]` como "array de T":
++		// se pasa vacío y se conserva el original para restaurarlo después (ver src/swagger.ts).
++		if (Array.isArray(propertySchema.type)) newPropertySchema["x-original-type"] = propertySchema.type;
+ 		if (usesThreePointOneSyntax) newPropertySchema[USES_THREE_POINT_ONE_SYNTAX_KEY] = true;
+ 		if (hasRefs) newPropertySchema[PARENT_HAS_REFS_KEY] = true;
+ 		if (typeof propertySchema.type !== "string") newPropertySchema[EMPTY_TYPE_KEY] = true;

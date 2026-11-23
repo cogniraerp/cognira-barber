@@ -1,0 +1,62 @@
+# Cognira Barber en producción: HTTPS automático (Let's Encrypt).
+#   app.DOMAIN      → panel (SPA)
+#   api.DOMAIN      → API (NestJS)
+#   {slug}.DOMAIN   → página pública de cada barbería (SPA), certificado on-demand (sitio atrapa-todo)
+#   DOMAIN, www     → redirigen al panel
+{
+	email {$ACME_EMAIL}
+	# Antes de emitir un certificado para un subdominio, Caddy pregunta a la API si la barbería existe.
+	on_demand_tls {
+		ask http://api:3000/v1/public/tls/ask
+	}
+	# Solo para probar en local: CADDY_GLOBAL_EXTRA=local_certs (CA interna, sin Let's Encrypt).
+	{$CADDY_GLOBAL_EXTRA}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+(spa) {
+	root * /srv
+	encode zstd gzip
+	import security_headers
+	# CSP: solo nuestro JS; estilos/fuentes de Google Fonts (fuentes de marca); imágenes https (R2);
+	# llamadas solo a nuestra API. 'unsafe-inline' en estilos: React usa estilos en línea (tema).
+	header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https://api.{$DOMAIN}; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+	header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
+	try_files {path} /index.html
+	file_server
+}
+
+api.{$DOMAIN} {
+	encode zstd gzip
+	import security_headers
+	reverse_proxy api:3000
+}
+
+app.{$DOMAIN} {
+	import spa
+	header X-Frame-Options SAMEORIGIN
+}
+
+{$DOMAIN}, www.{$DOMAIN} {
+	redir https://app.{$DOMAIN}{uri}
+}
+
+# Cada barbería en su subdominio ({slug}.DOMAIN): sitio "atrapa-todo" con certificado on-demand,
+# emitido solo si la API lo aprueba (/v1/public/tls/ask). No se usa *.DOMAIN: un comodín hace que
+# Caddy deje de gestionar aparte app/api y no dispara la emisión on-demand.
+https:// {
+	tls {
+		on_demand
+	}
+	import spa
+}

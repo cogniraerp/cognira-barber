@@ -1,0 +1,29 @@
+# ── Secretos: nunca al repositorio ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Dependencias, builds y datos locales ──
+node_modules/
+dist/
+dev-dist/
+coverage/
+storage/
+*.tsbuildinfo
+*.log
+
+# ── Código generado (se regenera al compilar) ──
+barbersaas-api/src/generated/
+barbersaas-web/src/api/generated/
+
+# ── Resultados de pruebas ──
+barbersaas-web/test-results/
+barbersaas-web/playwright-report/
+
+# ── Local ──
+.claude/settings.local.json
+.DS_Store
+.vscode/
+.idea/
