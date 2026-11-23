@@ -10,7 +10,7 @@ node_modules/
 dist/
 dev-dist/
 coverage/
-storage/
+/barbersaas-api/storage/
 *.tsbuildinfo
 *.log
 

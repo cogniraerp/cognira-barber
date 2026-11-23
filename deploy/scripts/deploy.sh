@@ -6,7 +6,7 @@ set -eu
 : "${SERVER:?Define SERVER=usuario@ip}"
 DEST="${DEST:-/opt/cognira}"
 rsync -az --delete \
-  --exclude node_modules --exclude dist --exclude storage --exclude coverage \
+  --exclude node_modules --exclude dist --exclude 'barbersaas-api/storage/' --exclude coverage \
   --exclude playwright-report --exclude test-results --exclude '.env' --exclude '.env.*' \
   --exclude 'src/generated' --exclude '*.log' --exclude tsconfig.tsbuildinfo \
   barbersaas-api barbersaas-web deploy "$SERVER:$DEST/"
