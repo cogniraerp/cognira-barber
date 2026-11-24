@@ -28,6 +28,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { errorMessage } from '@/lib/errors';
 import { formatMoney } from '@/lib/utils';
 import { useAuth } from '@/stores/auth';
+import { EmailBadge, MemberAccountActions } from './components/member-account';
 import { fmtDate, fmtDateTime } from './components/format';
 import { InvoiceStatus, ShopStatus, SubStatus } from './components/labels';
 import { ReasonDialog } from './components/reason-dialog';
@@ -125,9 +126,17 @@ export function BarbershopDetailPage() {
           <CardContent>
             <ul className="grid gap-2 text-sm">
               {b.members.map((m) => (
-                <li key={m.id} className="flex items-center justify-between gap-2">
-                  <span className="grid min-w-0"><span className="truncate">{m.fullName ?? m.email}</span>{m.fullName && <span className="truncate text-xs text-muted-foreground">{m.email}</span>}</span>
-                  <span className="flex shrink-0 gap-1"><Badge>{t(`roles.${m.role}`)}</Badge>{m.status !== 'active' && <Badge tone="warning">{m.status === 'invited' ? 'Invitado' : 'Deshabilitado'}</Badge>}</span>
+                <li key={m.id} className="grid gap-1 border-b pb-2 last:border-0 last:pb-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="grid min-w-0"><span className="truncate">{m.fullName ?? m.email}</span>{m.fullName && <span className="truncate text-xs text-muted-foreground">{m.email}</span>}</span>
+                    <span className="flex shrink-0 gap-1"><Badge>{t(`roles.${m.role}`)}</Badge>{m.status !== 'active' && <Badge tone="warning">{m.status === 'invited' ? 'Invitado' : 'Deshabilitado'}</Badge>}</span>
+                  </div>
+                  {m.userId && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <EmailBadge verified={m.emailVerified} />
+                      {isSuper && <MemberAccountActions userId={m.userId} verified={m.emailVerified} name={m.fullName ?? m.email ?? ''} />}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

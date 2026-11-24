@@ -79,6 +79,9 @@ export const BarbershopDetailSchema = BarbershopListItemSchema.extend({
       status: z.enum(['invited', 'active', 'disabled']),
       email: z.string().nullable(),
       fullName: z.string().nullable(),
+      /** null = invitado que aún no creó su cuenta. */
+      userId: z.uuid().nullable(),
+      emailVerified: z.boolean(),
     }),
   ),
 });

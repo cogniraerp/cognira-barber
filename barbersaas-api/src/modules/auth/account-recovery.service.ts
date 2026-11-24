@@ -163,6 +163,64 @@ export class AccountRecoveryService {
     this.mail(issued.user.email, verifyEmail({ name: issued.user.fullName, url }));
   }
 
+  // ───────────── vía manual (superadmin), mientras no salgan correos ─────────────
+
+  /** El superadmin confirma el correo de un usuario (p. ej. lo validó por WhatsApp). */
+  async markVerifiedByAdmin(userId: string): Promise<{ emailVerifiedAt: Date }> {
+    return this.prisma.run(SYSTEM, async (tx) => {
+      const u = await tx.user.findFirst({
+        where: { id: userId, deletedAt: null },
+        select: { emailVerifiedAt: true },
+      });
+      if (!u) throw AppError.notFound('Usuario');
+      const at = u.emailVerifiedAt ?? new Date();
+      if (!u.emailVerifiedAt) {
+        await tx.user.update({ where: { id: userId }, data: { emailVerifiedAt: at } });
+        await this.audit.record(tx, {
+          action: 'platform.user.email_verified',
+          entity: 'user',
+          entityId: userId,
+        });
+      }
+      return { emailVerifiedAt: at };
+    });
+  }
+
+  /**
+   * Enlace para restablecer la contraseña que el superadmin le envía al usuario por otro medio
+   * (WhatsApp). Solo lo ve el superadmin; vence en 1 hora y anula los enlaces anteriores.
+   */
+  async resetLinkByAdmin(userId: string): Promise<{ url: string; expiresAt: Date; email: string }> {
+    return this.prisma.run(SYSTEM, async (tx) => {
+      const u = await tx.user.findFirst({
+        where: { id: userId, deletedAt: null },
+        select: { email: true },
+      });
+      if (!u) throw AppError.notFound('Usuario');
+      const now = new Date();
+      await tx.authToken.updateMany({
+        where: { userId, kind: 'password_reset', usedAt: null },
+        data: { usedAt: now },
+      });
+      const token = randomBytes(32).toString('base64url');
+      const expiresAt = new Date(now.getTime() + RESET_TTL_MS);
+      await tx.authToken.create({
+        data: {
+          userId,
+          kind: 'password_reset',
+          tokenHash: TokenService.hashRefresh(token),
+          expiresAt,
+        },
+      });
+      await this.audit.record(tx, {
+        action: 'platform.user.reset_link',
+        entity: 'user',
+        entityId: userId,
+      });
+      return { url: `${this.env.WEB_URL}/restablecer?token=${token}`, expiresAt, email: u.email };
+    });
+  }
+
   // ───────────────────────── internos ─────────────────────────
 
   /** Crea un token nuevo, salvo que se haya enviado otro hace menos de un minuto (null). */

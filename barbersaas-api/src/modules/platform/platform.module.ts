@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
 import { BarbershopsModule } from '../barbershops/barbershops.module';
+import { PlatformUsersController } from './users/platform-users.controller';
 import { AuditLogsController } from './audit/audit-logs.controller';
 import { PlatformBarbershopsController } from './barbershops/platform-barbershops.controller';
 import { PlatformBarbershopsService } from './barbershops/platform-barbershops.service';
@@ -12,8 +14,9 @@ import { PlansService } from './plans/plans.service';
 
 /** Panel de Superadmin / Soporte. Todas las rutas bajo /v1/platform y con @PlatformRoles. */
 @Module({
-  imports: [BarbershopsModule],
+  imports: [BarbershopsModule, AuthModule],
   controllers: [
+    PlatformUsersController,
     PlansController,
     PlatformBarbershopsController,
     PlatformBillingController,

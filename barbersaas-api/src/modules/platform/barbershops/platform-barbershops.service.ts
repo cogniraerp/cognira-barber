@@ -163,7 +163,7 @@ export class PlatformBarbershopsService {
                 role: true,
                 status: true,
                 inviteEmail: true,
-                user: { select: { email: true, fullName: true } },
+                user: { select: { id: true, email: true, fullName: true, emailVerifiedAt: true } },
               },
               orderBy: { createdAt: 'asc' },
             }),
@@ -183,6 +183,8 @@ export class PlatformBarbershopsService {
             status: m.status,
             email: m.user?.email ?? m.inviteEmail,
             fullName: m.user?.fullName ?? null,
+            userId: m.user?.id ?? null,
+            emailVerified: !!m.user?.emailVerifiedAt,
           })),
         };
       },
