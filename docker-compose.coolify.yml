@@ -1,5 +1,9 @@
 # Cognira Barber en Coolify (recurso "Docker Compose" desde el repositorio de GitHub).
 # Guía: deploy/COOLIFY.md. Las variables ${…} se completan en Coolify (pestaña Environment Variables).
+#
+# Las imágenes NO se compilan en el servidor: las compila GitHub Actions (.github/workflows/deploy.yml)
+# y las sube a ghcr.io; Coolify solo las descarga. IMAGE_TAG = staging | prod.
+#
 # Traefik (el proxy de Coolify) pone el HTTPS: en Coolify asigna los dominios a `web` (puerto 80)
 # y a `api` con el puerto explícito: https://api.<dominio>:3000.
 # La base es el Postgres de Coolify: se llega por la red `coolify` con su host interno.
@@ -43,7 +47,8 @@ x-api-env: &api-env
 services:
   # Aplica las migraciones en cada despliegue y termina (usuario dueño de la base, no la API).
   migrate:
-    build: { context: ./barbersaas-api, target: deps }
+    image: ghcr.io/cogniraerp/cognira-barber-migrate:${IMAGE_TAG:-staging}
+    pull_policy: always
     command: ["pnpm", "prisma", "migrate", "deploy"]
     environment:
       NODE_ENV: production
@@ -54,7 +59,8 @@ services:
     exclude_from_hc: true
 
   api:
-    build: ./barbersaas-api
+    image: ghcr.io/cogniraerp/cognira-barber-api:${IMAGE_TAG:-staging}
+    pull_policy: always
     environment:
       <<: *api-env
       APP_MODE: api
@@ -74,7 +80,8 @@ services:
       retries: 5
 
   worker:
-    build: ./barbersaas-api
+    image: ghcr.io/cogniraerp/cognira-barber-api:${IMAGE_TAG:-staging}
+    pull_policy: always
     environment:
       <<: *api-env
       APP_MODE: worker
@@ -88,13 +95,9 @@ services:
       disable: true
 
   web:
-    build:
-      context: ./barbersaas-web
-      args:
-        VITE_API_URL: ${PUBLIC_API_URL}
-        VITE_ROOT_DOMAIN: ${ROOT_DOMAIN}
-        # true solo cuando exista DNS y certificado comodín para {slug}.ROOT_DOMAIN.
-        VITE_PUBLIC_SUBDOMAINS: ${PUBLIC_SUBDOMAINS:-false}
+    # La web lleva los dominios del ambiente incrustados (se compila una por ambiente).
+    image: ghcr.io/cogniraerp/cognira-barber-web:${IMAGE_TAG:-staging}
+    pull_policy: always
     expose: ["80"]
     restart: unless-stopped
 

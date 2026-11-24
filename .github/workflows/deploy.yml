@@ -1,0 +1,145 @@
+# Despliegue continuo de Cognira Barber.
+#   push a main      → pruebas → imágenes (tag :staging) → despliega STAGING en Coolify
+#   Run workflow     → elige "production" → imágenes (tag :prod) → despliega PRODUCCIÓN
+# El servidor no compila: Coolify solo descarga las imágenes de ghcr.io (ver deploy/COOLIFY.md).
+#
+# Configuración del repositorio (Settings → Secrets and variables → Actions):
+#   secreto  COOLIFY_TOKEN             token de API de Coolify (permiso deploy)
+#   variable COOLIFY_URL               https://panel.codecraft.net.pe
+#   variable COOLIFY_APP_STAGING       uuid de la app de staging en Coolify
+#   variable COOLIFY_APP_PRODUCTION    uuid de la app de producción en Coolify
+name: Build y despliegue
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente a desplegar
+        type: choice
+        options: [staging, production]
+        default: staging
+
+concurrency:
+  group: deploy-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/cogniraerp
+  ENV_NAME: ${{ inputs.environment || 'staging' }}
+
+jobs:
+  check:
+    name: Pruebas (typecheck, lint, unitarias)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            barbersaas-api/pnpm-lock.yaml
+            barbersaas-web/pnpm-lock.yaml
+      - name: API
+        working-directory: barbersaas-api
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -s typecheck
+          pnpm -s lint
+          pnpm -s test
+      - name: Web
+        working-directory: barbersaas-web
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec orval --config orval.config.ts
+          pnpm -s typecheck
+          pnpm -s lint
+          pnpm -s test
+
+  images:
+    name: Imágenes (${{ inputs.environment || 'staging' }})
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dominios del ambiente
+        run: |
+          if [ "$ENV_NAME" = production ]; then
+            echo "ROOT=barber.codecraft.net.pe" >> "$GITHUB_ENV"; echo "TAG=prod" >> "$GITHUB_ENV"
+          else
+            echo "ROOT=staging.barber.codecraft.net.pe" >> "$GITHUB_ENV"; echo "TAG=staging" >> "$GITHUB_ENV"
+          fi
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: API
+        uses: docker/build-push-action@v6
+        with:
+          context: barbersaas-api
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/cognira-barber-api:${{ env.TAG }}
+            ${{ env.REGISTRY }}/cognira-barber-api:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: Migraciones
+        uses: docker/build-push-action@v6
+        with:
+          context: barbersaas-api
+          target: deps
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/cognira-barber-migrate:${{ env.TAG }}
+            ${{ env.REGISTRY }}/cognira-barber-migrate:${{ github.sha }}
+          cache-from: type=gha,scope=api
+      - name: Web
+        uses: docker/build-push-action@v6
+        with:
+          context: barbersaas-web
+          push: true
+          build-args: |
+            VITE_API_URL=https://api.${{ env.ROOT }}
+            VITE_ROOT_DOMAIN=${{ env.ROOT }}
+            VITE_PUBLIC_SUBDOMAINS=false
+          tags: |
+            ${{ env.REGISTRY }}/cognira-barber-web:${{ env.TAG }}
+            ${{ env.REGISTRY }}/cognira-barber-web:${{ env.TAG }}-${{ github.sha }}
+          cache-from: type=gha,scope=web-${{ env.TAG }}
+          cache-to: type=gha,scope=web-${{ env.TAG }},mode=max
+
+  deploy:
+    name: Desplegar en Coolify (${{ inputs.environment || 'staging' }})
+    needs: images
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'staging' }}
+    steps:
+      - name: Lanzar y esperar el despliegue
+        env:
+          URL: ${{ vars.COOLIFY_URL }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          APP: ${{ env.ENV_NAME == 'production' && vars.COOLIFY_APP_PRODUCTION || vars.COOLIFY_APP_STAGING }}
+        run: |
+          set -euo pipefail
+          dep=$(curl -fsS -X POST "$URL/api/v1/deploy" -H "Authorization: Bearer $TOKEN" \
+            -H 'Content-Type: application/json' -d "{\"uuid\":\"$APP\",\"force\":false}" \
+            | jq -r '.deployments[0].deployment_uuid')
+          echo "Despliegue $dep en cola"
+          for i in $(seq 1 80); do
+            st=$(curl -fsS "$URL/api/v1/deployments/$dep" -H "Authorization: Bearer $TOKEN" | jq -r '.status')
+            echo "estado: $st"
+            case "$st" in finished) exit 0;; failed|cancelled*) exit 1;; esac
+            sleep 15
+          done
+          echo "El despliegue no terminó a tiempo"; exit 1

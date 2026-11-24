@@ -66,6 +66,22 @@ api.staging.barber    A   172.212.202.62
 
 Usa los **Scheduled Backups** de la base en Coolify, con destino S3 o R2: diarios y con retención de 14 días. El servicio `backup` de `deploy/` no se usa en Coolify.
 
-## 6. Actualizar
+## 6. Despliegue continuo (GitHub Actions)
 
-Cada `git push` a la rama del ambiente, o el botón **Redeploy**, reconstruye y despliega. Las migraciones se aplican solas.
+El servidor **no compila**. `.github/workflows/deploy.yml` corre las pruebas, compila las imágenes en GitHub, las sube a `ghcr.io/cogniraerp/cognira-barber-{api,migrate,web}` y le pide a Coolify que despliegue. Coolify solo descarga las imágenes (`IMAGE_TAG`: `staging` o `prod`).
+
+- **Staging:** se despliega solo con cada `git push` a `main`.
+- **Producción:** en GitHub, ve a **Actions → Build y despliegue → Run workflow** y elige `production`.
+
+**Configuración inicial (una sola vez):**
+1. **GitHub → Settings → Secrets and variables → Actions:**
+   - secreto `COOLIFY_TOKEN`: un token de Coolify con permiso de despliegue;
+   - variables `COOLIFY_URL` = `https://panel.codecraft.net.pe`, `COOLIFY_APP_STAGING` = `kbzbh8ke5ejpfavfczy8rpnz` y `COOLIFY_APP_PRODUCTION` = `wn9q1wmmmxrofzmpywdogapl`.
+2. **Que el servidor pueda descargar las imágenes privadas.**
+   - Crea un token de GitHub (**Settings → Developer settings → Personal access tokens → Tokens (classic)**) con **solo** el permiso `read:packages`.
+   - En Coolify ve a **Servers → localhost → Terminal** y ejecuta: `docker login ghcr.io -u cogniraerp` (pega el token como contraseña).
+3. **Opcional:** en **GitHub → Settings → Environments → production**, agrega revisores obligatorios para que nadie despliegue producción sin tu aprobación.
+
+## 7. Actualizar
+
+Cada `git push` a `main` despliega staging, y producción se despliega con el botón de Actions. Las migraciones se aplican solas en cada despliegue (servicio `migrate`).
