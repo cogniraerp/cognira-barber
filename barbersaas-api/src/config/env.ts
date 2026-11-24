@@ -68,6 +68,14 @@ export const EnvSchema = z
     SENTRY_DSN: z.union([z.url(), z.literal('')]).default(''),
     SENTRY_ENVIRONMENT: z.string().default('production'),
 
+    /**
+     * Correo por SMTP (tiene prioridad sobre Resend). Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=465,
+     * SMTP_USER=tu@gmail.com, SMTP_PASS=contraseña de aplicación (16 letras), EMAIL_FROM con ese mismo correo.
+     */
+    SMTP_HOST: z.string().default(''),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(465),
+    SMTP_USER: z.string().default(''),
+    SMTP_PASS: z.string().default(''),
     RESEND_API_KEY: z.string().optional().default(''),
     EMAIL_FROM: z.string().default('BarberSaaS <no-reply@barbersaas.com>'),
 

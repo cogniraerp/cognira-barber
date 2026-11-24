@@ -13,7 +13,8 @@ import type { Env } from '../../../config/env';
 import type { Prisma } from '../../../generated/prisma/client';
 import type { MemberRole } from '../../../generated/prisma/enums';
 import { PrismaService, type Tx } from '../../../infra/prisma/prisma.service';
-import { newInviteToken } from '../../invitations/invite-token';
+import { InviteMailer } from '../../invitations/invite-mailer';
+import { INVITE_TTL_MS, newInviteToken } from '../../invitations/invite-token';
 import { find as findRole } from '../roles/roles.service';
 import type { InviteMemberDto, UpdateMemberDto } from './members.dto';
 
@@ -37,6 +38,7 @@ export class MembersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly plans: PlanLimitsService,
+    private readonly mailer: InviteMailer,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -54,7 +56,9 @@ export class MembersService {
 
   async invite(t: TenantContext, dto: InviteMemberDto) {
     if (dto.customRoleId) {
-      const r = await this.prisma.run(tenantDb(t), (tx) => findRole(tx, t.barbershopId, dto.customRoleId!));
+      const r = await this.prisma.run(tenantDb(t), (tx) =>
+        findRole(tx, t.barbershopId, dto.customRoleId!),
+      );
       dto = { ...dto, role: r.baseRole as InviteMemberDto['role'] };
     }
     this.assertCanAssignRole(t, dto.role);
@@ -62,7 +66,7 @@ export class MembersService {
     if (dto.staff && dto.role !== 'barber')
       throw AppError.conflict('Solo los barberos tienen perfil de staff');
 
-    return this.prisma.run(tenantDb(t), async (tx) => {
+    const res = await this.prisma.run(tenantDb(t), async (tx) => {
       const clash = await tx.membership.findFirst({
         where: {
           barbershopId: t.barbershopId,
@@ -116,10 +120,12 @@ export class MembersService {
         inviteUrl: this.inviteUrl(invite.token),
       };
     });
+    await this.mailInvite(t, res.member.email, res.member.role, res.inviteUrl);
+    return res;
   }
 
-  resendInvite(t: TenantContext, id: string) {
-    return this.prisma.run(tenantDb(t), async (tx) => {
+  async resendInvite(t: TenantContext, id: string) {
+    const res = await this.prisma.run(tenantDb(t), async (tx) => {
       const m = await load(tx, t.barbershopId, id);
       if (m.status !== 'invited') throw AppError.conflict('La invitación ya fue aceptada');
       this.assertCanManage(t, m);
@@ -139,6 +145,22 @@ export class MembersService {
         inviteToken: invite.token,
         inviteUrl: this.inviteUrl(invite.token),
       };
+    });
+    await this.mailInvite(t, res.member.email, res.member.role, res.inviteUrl);
+    return res;
+  }
+
+  /** Correo de invitación (en segundo plano; el enlace también se muestra en pantalla). */
+  private async mailInvite(t: TenantContext, to: string | null, role: string, url: string) {
+    if (!to) return;
+    const shop = await this.prisma.run(tenantDb(t), (tx) =>
+      tx.barbershop.findUniqueOrThrow({ where: { id: t.barbershopId }, select: { name: true } }),
+    );
+    this.mailer.send(to, {
+      shopName: shop.name,
+      role,
+      url,
+      expiresAt: new Date(Date.now() + INVITE_TTL_MS),
     });
   }
 
@@ -239,7 +261,10 @@ function toDto(m: MemberRow) {
     fullName: m.user?.fullName ?? null,
     permissions: perms.success ? perms.data : {},
     staffId: m.staff?.id ?? null,
-    customRole: m.customRole && !m.customRole.deletedAt ? { id: m.customRole.id, name: m.customRole.name } : null,
+    customRole:
+      m.customRole && !m.customRole.deletedAt
+        ? { id: m.customRole.id, name: m.customRole.name }
+        : null,
     inviteExpiresAt: m.status === 'invited' ? m.inviteExpiresAt : null,
     createdAt: m.createdAt,
   };

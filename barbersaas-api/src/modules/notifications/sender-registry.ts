@@ -4,6 +4,7 @@ import { ENV } from '../../config/config.module';
 import type { Env } from '../../config/env';
 import type { MessagingProvider } from '../../generated/prisma/enums';
 import { ConsoleSender, ResendSender, WaMeSender } from './providers/simple';
+import { SmtpSender } from './providers/smtp';
 import { TwilioSender } from './providers/twilio';
 import {
   HTTP_FETCH,
@@ -24,6 +25,8 @@ export interface WhatsAppConfigRow {
 /** Elige y construye el "sender" según la configuración de la barbería (o de la plataforma). */
 @Injectable()
 export class SenderRegistry {
+  private smtp?: SmtpSender;
+
   constructor(
     @Inject(ENV) private readonly env: Env,
     @Inject(HTTP_FETCH) private readonly fetchFn: Fetch,
@@ -73,10 +76,23 @@ export class SenderRegistry {
   }
 
   email(): Sender {
+    const e = this.env;
+    if (e.SMTP_HOST) {
+      // Un solo transporte por proceso (reutiliza la conexión).
+      this.smtp ??= new SmtpSender({
+        host: e.SMTP_HOST,
+        port: e.SMTP_PORT,
+        secure: e.SMTP_PORT === 465,
+        user: e.SMTP_USER,
+        pass: e.SMTP_PASS,
+        from: e.EMAIL_FROM,
+      });
+      return this.smtp;
+    }
     if (this.env.RESEND_API_KEY)
       return new ResendSender(this.env.RESEND_API_KEY, this.env.EMAIL_FROM, this.fetchFn);
     if (this.env.NODE_ENV === 'production')
-      throw new ProviderError('Email no configurado (RESEND_API_KEY)', false);
+      throw new ProviderError('Email no configurado (SMTP_HOST o RESEND_API_KEY)', false);
     return new ConsoleSender('email');
   }
 

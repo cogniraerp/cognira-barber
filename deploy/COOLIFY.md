@@ -47,7 +47,8 @@ api.staging.barber    A   172.212.202.62
 | `JWT_SECRET`, `ENCRYPTION_KEY` | generar con `sh deploy/scripts/gen-secrets.sh` | **Distintos en cada ambiente.** Guarda `ENCRYPTION_KEY` aparte |
 | `LEGAL_NAME`, `LEGAL_RUC`, `LEGAL_ADDRESS`, `LEGAL_EMAIL` | datos de tu empresa | Obligatorios: sin ellos la API no arranca |
 | `STORAGE_DRIVER`, `S3_*` | Cloudflare R2 | Ver `deploy/README.md` §1. Mientras no tengas R2, usa `STORAGE_DRIVER=local` (los archivos se pierden al redeplegar) |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Resend | Sin esto no salen los correos (recuperar contraseña, libro de reclamaciones) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM` | Gmail: `smtp.gmail.com`, `465`, `cogniraerp@gmail.com`, contraseña de aplicación y `Cognira Barber <cogniraerp@gmail.com>` | Correo por SMTP; tiene prioridad sobre Resend. Gmail permite unos 500 correos al día |
+| `RESEND_API_KEY` | alternativa a SMTP | Sin SMTP ni Resend no salen los correos (invitaciones, recuperar contraseña, libro de reclamaciones) |
 | `SENTRY_DSN` | opcional | Monitoreo de errores |
 | `PUBLIC_SUBDOMAINS` | `false` | `true` solo cuando exista el comodín |
 

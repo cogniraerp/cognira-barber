@@ -11,7 +11,8 @@ import { PrismaService, type Tx } from '../../../infra/prisma/prisma.service';
 import { ENV } from '../../../config/config.module';
 import type { Env } from '../../../config/env';
 import { ProvisioningService } from '../../barbershops/provisioning.service';
-import { newInviteToken } from '../../invitations/invite-token';
+import { InviteMailer } from '../../invitations/invite-mailer';
+import { INVITE_TTL_MS, newInviteToken } from '../../invitations/invite-token';
 import type {
   ChangePlanDto,
   CreateBarbershopDto,
@@ -55,6 +56,7 @@ export class PlatformBarbershopsService {
     private readonly audit: AuditService,
     private readonly provisioning: ProvisioningService,
     private readonly tokens: TokenService,
+    private readonly mailer: InviteMailer,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -63,10 +65,15 @@ export class PlatformBarbershopsService {
    * barbería no se puede gestionar). Anula el enlace anterior y vence en 7 días.
    */
   async inviteLink(user: AuthUser, barbershopId: string, memberId: string) {
-    return this.prisma.run(platformDb(user), async (tx) => {
+    const res = await this.prisma.run(platformDb(user), async (tx) => {
       const m = await tx.membership.findFirst({
         where: { id: memberId, barbershopId, deletedAt: null },
-        select: { status: true, inviteEmail: true },
+        select: {
+          status: true,
+          inviteEmail: true,
+          role: true,
+          barbershop: { select: { name: true } },
+        },
       });
       if (!m) throw AppError.notFound('Miembro');
       if (m.status !== 'invited' || !m.inviteEmail)
@@ -85,11 +92,21 @@ export class PlatformBarbershopsService {
         entityId: memberId,
       });
       return {
-        url: `${this.env.WEB_URL.replace(/\/$/, '')}/invitacion/${invite.token}`,
+        url: this.inviteUrl(invite.token),
         expiresAt: invite.expiresAt,
         email: m.inviteEmail,
+        shopName: m.barbershop.name,
+        role: m.role,
       };
     });
+    // Las dos vías: el correo (si está configurado) y el enlace en pantalla para WhatsApp.
+    this.mailer.send(res.email, {
+      shopName: res.shopName,
+      role: res.role,
+      url: res.url,
+      expiresAt: res.expiresAt,
+    });
+    return { url: res.url, expiresAt: res.expiresAt, email: res.email };
   }
 
   async list(user: AuthUser, q: ListBarbershopsQueryDto) {
@@ -246,9 +263,9 @@ export class PlatformBarbershopsService {
     };
   }
 
-  /** Alta manual: si el email ya tiene cuenta, queda como owner activo; si no, se invita. */
-  create(user: AuthUser, dto: CreateBarbershopDto) {
-    return this.prisma.run(platformDb(user), async (tx) => {
+  /** Alta manual: si el email ya tiene cuenta, queda como owner activo; si no, se invita (y se le envía el correo). */
+  async create(user: AuthUser, dto: CreateBarbershopDto) {
+    const res = await this.prisma.run(platformDb(user), async (tx) => {
       const plan = await findPlan(tx, dto.planCode);
       const existing = await tx.user.findFirst({
         where: { email: dto.ownerEmail, deletedAt: null },
@@ -272,6 +289,18 @@ export class PlatformBarbershopsService {
         inviteToken: r.inviteToken ?? null,
       };
     });
+    if (res.inviteToken)
+      this.mailer.send(dto.ownerEmail, {
+        shopName: dto.name,
+        role: 'owner',
+        url: this.inviteUrl(res.inviteToken),
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+      });
+    return res;
+  }
+
+  private inviteUrl(token: string): string {
+    return `${this.env.WEB_URL.replace(/\/$/, '')}/invitacion/${token}`;
   }
 
   async update(user: AuthUser, id: string, dto: UpdateBarbershopDto) {

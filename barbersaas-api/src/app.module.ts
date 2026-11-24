@@ -14,6 +14,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { ComplaintsModule } from './modules/complaints/complaints.module';
 import { DomainsModule } from './modules/domains/domains.module';
 import { EdgeModule } from './modules/edge/edge.module';
+import { InviteMailModule } from './modules/invitations/invite-mailer';
 import { HealthModule } from './modules/health/health.module';
 import { MeModule } from './modules/me/me.module';
 import { PlatformModule } from './modules/platform/platform.module';
@@ -41,6 +42,7 @@ import { ShopContextModule } from './modules/shop-context/shop-context.module';
     ComplaintsModule,
     DomainsModule,
     EdgeModule,
+    InviteMailModule,
     MeModule,
     ShopContextModule,
     PlatformModule,

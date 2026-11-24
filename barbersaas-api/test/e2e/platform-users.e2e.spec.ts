@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { SenderRegistry } from '../../src/modules/notifications/sender-registry';
+import type { OutgoingMessage } from '../../src/modules/notifications/providers/types';
 import { createTenant, type TenantFixture } from '../support/fixtures';
 import { createTestApp, type TestApp } from '../support/test-app';
 import { TEST_OWNER_URL } from '../support/test-env';
@@ -109,6 +111,14 @@ describe('cuentas: vía manual del superadmin', () => {
 
 describe('enlace de invitación del dueño (barbería creada desde la plataforma)', () => {
   it('genera el enlace, la dueña crea su cuenta y acepta; luego ya no aplica', async () => {
+    const outbox: OutgoingMessage[] = [];
+    vi.spyOn(t.app.get(SenderRegistry), 'email').mockReturnValue({
+      name: 'test',
+      send: (m: OutgoingMessage) => {
+        outbox.push(m);
+        return Promise.resolve({ status: 'sent' as const, providerMessageId: null });
+      },
+    });
     const ownerEmail = `duena-${Date.now()}@test.pe`;
     const created = (
       await request(t.http)
@@ -127,11 +137,18 @@ describe('enlace de invitación del dueño (barbería creada desde la plataforma
     const member = detail.members.find((x: { email: string }) => x.email === ownerEmail);
     expect(member).toMatchObject({ role: 'owner', status: 'invited', userId: null });
 
+    // Al crearla se le envía la invitación por correo.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(outbox.find((m) => m.to === ownerEmail)?.body).toMatch(
+      /como Dueño[\s\S]*\/invitacion\//,
+    );
     const path = `/v1/platform/barbershops/${created.id}/members/${member.id}/invite-link`;
     await as(supportToken).post(path).expect(403);
     const first = (await as(superToken).post(path).expect(200)).body;
     const link = (await as(superToken).post(path).expect(200)).body;
     expect(link).toMatchObject({ email: ownerEmail, url: expect.stringContaining('/invitacion/') });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(outbox.at(-1)?.body).toContain(link.url as string);
     const tok = (u: string) => u.split('/invitacion/')[1]!;
     // El enlace anterior ya no sirve.
     await request(t.http)
