@@ -148,9 +148,11 @@ describe('enlace de invitación del dueño (barbería creada desde la plataforma
       .expect(200);
     const after = (await as(superToken).get(`/v1/platform/barbershops/${created.id}`).expect(200))
       .body;
-    expect(after.members.find((x: { email: string }) => x.email === ownerEmail).status).toBe(
-      'active',
-    );
+    // Aceptar la invitación deja el correo verificado (llegó a ese correo).
+    expect(after.members.find((x: { email: string }) => x.email === ownerEmail)).toMatchObject({
+      status: 'active',
+      emailVerified: true,
+    });
     await as(superToken).post(path).expect(409);
   });
 });

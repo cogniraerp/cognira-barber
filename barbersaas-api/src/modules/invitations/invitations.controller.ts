@@ -90,6 +90,11 @@ export class InvitationsController {
         data: { userId: user.userId, status: 'active', inviteToken: null, inviteExpiresAt: null },
       });
       if (claimed.count === 0) throw AppError.notFound('Invitación');
+      // La invitación llegó a ese correo (o el superadmin se la envió): queda verificado.
+      await tx.user.updateMany({
+        where: { id: user.userId, emailVerifiedAt: null },
+        data: { emailVerifiedAt: new Date() },
+      });
       await this.audit.record(tx, {
         action: 'shop.member.accept_invite',
         barbershopId: inv.barbershopId,

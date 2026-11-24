@@ -81,6 +81,13 @@ function appRoutes(): RouteObject[] {
       ),
     },
     {
+      path: '/invitacion/:token',
+      lazy: lazy(
+        () => import('@/features/auth/invitation-page'),
+        (m) => m.InvitationPage,
+      ),
+    },
+    {
       path: '/recuperar',
       lazy: lazy(
         () => import('@/features/auth/forgot-password-page'),
