@@ -1,8 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Copy, KeyRound, MailCheck, MailWarning, MessageCircle } from 'lucide-react';
+import { Copy, KeyRound, Link2, MailCheck, MailWarning, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { usePlatformUsersControllerResetLink, usePlatformUsersControllerVerifyEmail } from '@/api/generated/endpoints';
+import {
+  usePlatformBarbershopsControllerInviteLink,
+  usePlatformUsersControllerResetLink,
+  usePlatformUsersControllerVerifyEmail,
+} from '@/api/generated/endpoints';
 import type { ResetLinkDto } from '@/api/generated/model';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
@@ -42,7 +46,7 @@ export function MemberAccountActions({ userId, verified, name }: { userId: strin
       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={reset.isPending} onClick={() => reset.mutate({ id: userId })}>
         <KeyRound aria-hidden /> Enlace de contraseña
       </Button>
-      {link && <ResetLinkDialog link={link} name={name} onClose={() => setLink(null)} />}
+      {link && <LinkDialog link={link} kind="reset" name={name} onClose={() => setLink(null)} />}
     </>
   );
 }
@@ -59,15 +63,36 @@ function useMemberVerify(qc: ReturnType<typeof useQueryClient>) {
   });
 }
 
-function ResetLinkDialog({ link, name, onClose }: { link: ResetLinkDto; name: string; onClose: () => void }) {
+/** Miembro invitado que aún no creó su cuenta (p. ej. el dueño de una barbería creada aquí). */
+export function InviteLinkAction({ barbershopId, memberId, email }: { barbershopId: string; memberId: string; email: string }) {
+  const [link, setLink] = useState<ResetLinkDto | null>(null);
+  const invite = usePlatformBarbershopsControllerInviteLink({ mutation: { onSuccess: setLink, onError: failed } });
+  return (
+    <>
+      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={invite.isPending} onClick={() => invite.mutate({ id: barbershopId, memberId })}>
+        <Link2 aria-hidden /> Enlace de invitación
+      </Button>
+      {link && <LinkDialog link={link} kind="invite" name={email} onClose={() => setLink(null)} />}
+    </>
+  );
+}
+
+const LINK_TEXT = {
+  reset: { title: 'Enlace para elegir contraseña', validity: 'Sirve una sola vez y vence a las', msg: 'entra a este enlace para elegir tu contraseña de Cognira Barber (vence en 1 hora)' },
+  invite: { title: 'Enlace de invitación', validity: 'Con él crea su cuenta y su contraseña. Vence el', msg: 'te invito a Cognira Barber: entra a este enlace para crear tu cuenta y tu contraseña' },
+} as const;
+const fmtDay = new Intl.DateTimeFormat('es-PE', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Lima' });
+
+function LinkDialog({ link, kind, name, onClose }: { link: ResetLinkDto; kind: 'reset' | 'invite'; name: string; onClose: () => void }) {
+  const tx = LINK_TEXT[kind];
   const copy = async () => { await navigator.clipboard.writeText(link.url); toast.success('Enlace copiado'); };
-  const wa = `https://wa.me/?text=${encodeURIComponent(`Hola ${name}, entra a este enlace para elegir tu contraseña de Cognira Barber (vence en 1 hora): ${link.url}`)}`;
+  const wa = `https://wa.me/?text=${encodeURIComponent(`Hola ${name}, ${tx.msg}: ${link.url}`)}`;
   return (
     <Dialog
       open
       onClose={onClose}
-      title="Enlace para elegir contraseña"
-      description={`Para ${link.email}. Sirve una sola vez y vence a las ${fmt.format(new Date(link.expiresAt))}. Generar otro anula este.`}
+      title={tx.title}
+      description={`Para ${link.email}. ${tx.validity} ${(kind === 'reset' ? fmt : fmtDay).format(new Date(link.expiresAt))}. Generar otro anula este.`}
       className="max-w-lg"
       footer={<Button variant="ghost" onClick={onClose}>Cerrar</Button>}
     >

@@ -145,3 +145,9 @@ export const ImpersonationSchema = z.object({
   barbershop: z.object({ id: z.uuid(), slug: z.string(), name: z.string() }),
 });
 export class ImpersonationDto extends createZodDto(ImpersonationSchema) {}
+
+/** Enlace de invitación (para enviarlo por WhatsApp mientras no salen correos). */
+export class InviteLinkDto extends createZodDto(
+  z.object({ url: z.string(), expiresAt: IsoDate, email: z.string() }),
+  { codec: true },
+) {}

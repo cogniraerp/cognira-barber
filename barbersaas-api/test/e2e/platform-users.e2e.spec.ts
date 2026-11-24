@@ -106,3 +106,51 @@ describe('cuentas: vía manual del superadmin', () => {
     expect(rows[0]!.n).toBe(2);
   });
 });
+
+describe('enlace de invitación del dueño (barbería creada desde la plataforma)', () => {
+  it('genera el enlace, la dueña crea su cuenta y acepta; luego ya no aplica', async () => {
+    const ownerEmail = `duena-${Date.now()}@test.pe`;
+    const created = (
+      await request(t.http)
+        .post('/v1/platform/barbershops')
+        .set('Authorization', `Bearer ${superToken}`)
+        .send({
+          name: 'Creada por plataforma',
+          slug: `plat-${Date.now().toString(36)}`,
+          ownerEmail,
+          planCode: 'test-basic',
+        })
+        .expect(201)
+    ).body;
+    const detail = (await as(superToken).get(`/v1/platform/barbershops/${created.id}`).expect(200))
+      .body;
+    const member = detail.members.find((x: { email: string }) => x.email === ownerEmail);
+    expect(member).toMatchObject({ role: 'owner', status: 'invited', userId: null });
+
+    const path = `/v1/platform/barbershops/${created.id}/members/${member.id}/invite-link`;
+    await as(supportToken).post(path).expect(403);
+    const first = (await as(superToken).post(path).expect(200)).body;
+    const link = (await as(superToken).post(path).expect(200)).body;
+    expect(link).toMatchObject({ email: ownerEmail, url: expect.stringContaining('/invitacion/') });
+    const tok = (u: string) => u.split('/invitacion/')[1]!;
+    // El enlace anterior ya no sirve.
+    await request(t.http)
+      .get(`/v1/invitations/${tok(first.url as string)}`)
+      .expect(404);
+
+    const reg = await request(t.http)
+      .post('/v1/auth/register')
+      .send({ email: ownerEmail, password: 'Clave-duena-1', fullName: 'Dueña', acceptTerms: true })
+      .expect(201);
+    await request(t.http)
+      .post(`/v1/invitations/${tok(link.url as string)}/accept`)
+      .set('Authorization', `Bearer ${reg.body.accessToken as string}`)
+      .expect(200);
+    const after = (await as(superToken).get(`/v1/platform/barbershops/${created.id}`).expect(200))
+      .body;
+    expect(after.members.find((x: { email: string }) => x.email === ownerEmail).status).toBe(
+      'active',
+    );
+    await as(superToken).post(path).expect(409);
+  });
+});

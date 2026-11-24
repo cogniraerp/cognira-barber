@@ -23,6 +23,7 @@ import {
   CreateBarbershopResultDto,
   ExtendTrialDto,
   ImpersonationDto,
+  InviteLinkDto,
   ListBarbershopsQueryDto,
   ReasonDto,
   UpdateBarbershopDto,
@@ -89,6 +90,18 @@ export class PlatformBarbershopsController {
     @Body() dto: ReasonDto,
   ): Promise<void> {
     await this.shops.remove(u, id, dto.reason);
+  }
+
+  /** Enlace de invitación de un miembro invitado (p. ej. el dueño de una barbería creada aquí). */
+  @Post(':id/members/:memberId/invite-link')
+  @HttpCode(HttpStatus.OK)
+  @ZodResponse({ type: InviteLinkDto })
+  inviteLink(
+    @CurrentUser() u: AuthUser,
+    @Param('id', UuidPipe) id: string,
+    @Param('memberId', UuidPipe) memberId: string,
+  ) {
+    return this.shops.inviteLink(u, id, memberId);
   }
 
   @Post(':id/extend-trial')

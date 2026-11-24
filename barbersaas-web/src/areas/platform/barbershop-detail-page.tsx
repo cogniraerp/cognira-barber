@@ -28,7 +28,7 @@ import { Table, Td, Th } from '@/components/ui/table';
 import { errorMessage } from '@/lib/errors';
 import { formatMoney } from '@/lib/utils';
 import { useAuth } from '@/stores/auth';
-import { EmailBadge, MemberAccountActions } from './components/member-account';
+import { EmailBadge, InviteLinkAction, MemberAccountActions } from './components/member-account';
 import { fmtDate, fmtDateTime } from './components/format';
 import { InvoiceStatus, ShopStatus, SubStatus } from './components/labels';
 import { ReasonDialog } from './components/reason-dialog';
@@ -135,6 +135,12 @@ export function BarbershopDetailPage() {
                     <div className="flex flex-wrap items-center gap-1">
                       <EmailBadge verified={m.emailVerified} />
                       {isSuper && <MemberAccountActions userId={m.userId} verified={m.emailVerified} name={m.fullName ?? m.email ?? ''} />}
+                    </div>
+                  )}
+                  {!m.userId && m.status === 'invited' && isSuper && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-xs text-slate-500">Aún no crea su cuenta.</span>
+                      <InviteLinkAction barbershopId={b.id} memberId={m.id} email={m.email ?? ''} />
                     </div>
                   )}
                 </li>

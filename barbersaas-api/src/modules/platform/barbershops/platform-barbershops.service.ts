@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { AuditService } from '../../../common/audit/audit.service';
 import type { AuthUser } from '../../../common/auth/auth.types';
 import { platformDb } from '../../../common/auth/platform-db';
@@ -8,7 +8,10 @@ import { pageArgs } from '../../../common/http/zod';
 import { PlanLimitsOverrideSchema } from '../../../common/plan-limits/plan.schemas';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService, type Tx } from '../../../infra/prisma/prisma.service';
+import { ENV } from '../../../config/config.module';
+import type { Env } from '../../../config/env';
 import { ProvisioningService } from '../../barbershops/provisioning.service';
+import { newInviteToken } from '../../invitations/invite-token';
 import type {
   ChangePlanDto,
   CreateBarbershopDto,
@@ -52,7 +55,42 @@ export class PlatformBarbershopsService {
     private readonly audit: AuditService,
     private readonly provisioning: ProvisioningService,
     private readonly tokens: TokenService,
+    @Inject(ENV) private readonly env: Env,
   ) {}
+
+  /**
+   * Nuevo enlace de invitación para un miembro invitado (también el dueño, que desde el panel de la
+   * barbería no se puede gestionar). Anula el enlace anterior y vence en 7 días.
+   */
+  async inviteLink(user: AuthUser, barbershopId: string, memberId: string) {
+    return this.prisma.run(platformDb(user), async (tx) => {
+      const m = await tx.membership.findFirst({
+        where: { id: memberId, barbershopId, deletedAt: null },
+        select: { status: true, inviteEmail: true },
+      });
+      if (!m) throw AppError.notFound('Miembro');
+      if (m.status !== 'invited' || !m.inviteEmail)
+        throw AppError.conflict(
+          'Este usuario ya aceptó la invitación: usa el enlace de contraseña',
+        );
+      const invite = newInviteToken();
+      await tx.membership.update({
+        where: { id: memberId },
+        data: { inviteToken: invite.hash, inviteExpiresAt: invite.expiresAt },
+      });
+      await this.audit.record(tx, {
+        action: 'platform.member.invite_link',
+        barbershopId,
+        entity: 'membership',
+        entityId: memberId,
+      });
+      return {
+        url: `${this.env.WEB_URL.replace(/\/$/, '')}/invitacion/${invite.token}`,
+        expiresAt: invite.expiresAt,
+        email: m.inviteEmail,
+      };
+    });
+  }
 
   async list(user: AuthUser, q: ListBarbershopsQueryDto) {
     const where: Prisma.BarbershopWhereInput = {
