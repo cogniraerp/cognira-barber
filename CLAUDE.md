@@ -77,4 +77,8 @@ Imprime solo el resumen y los errores.
 - La base local acumula barberías "Barbería E2E …" de los E2E de la web.
 - Un E2E que crea datos globales (sin `barbershop_id`) debe borrarlos en `afterAll`: el orden de los archivos cambia y contamina a otros.
 - `pg_advisory_xact_lock` devuelve `void`: usar `$executeRaw`, porque `$queryRaw` no puede leer la columna.
+- **Evolution en Coolify** (servicio de plantilla) unido a la red `coolify`:
+  - sus hosts `postgres` y `redis` chocan con los de Coolify;
+  - usar `postgres-<uuid>` y `redis-<uuid>` en su compose **antes** del primer arranque;
+  - nuestra API lo llama en `http://api-<uuid>:8080`.
 - Detrás de Caddy, la API necesita `TRUST_PROXY=1`. Sin eso, todos los clientes comparten la IP del proxy (rate limit global).
