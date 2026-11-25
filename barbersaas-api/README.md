@@ -596,6 +596,17 @@ Email: Resend (`RESEND_API_KEY`); sin clave, en local se imprime en consola. El 
 - **Probar en local:** `docker compose --profile s3 up -d s3` levanta un S3 de prueba (adobe/s3mock) en :59000 con el bucket `media`. `test/e2e/storage-s3.e2e.spec.ts` sube, sirve y borra contra él; si no está arriba, se omite con un aviso.
 - **Cambiar de driver con datos:** las URLs guardadas apuntan al driver con que se subieron. Para pasar de `local` a `s3` con barberías existentes hay que copiar `storage/` al bucket y reemplazar el prefijo de las URLs. Producción arranca directo con `s3`.
 
+## WhatsApp por QR (Evolution API)
+
+- **Proveedor `evolution`** (`notifications/providers/evolution.ts`), verificado contra Evolution v2.3.7. Cada barbería tiene su instancia `cognira-<barbershopId>`; el nombre se guarda cifrado en `whatsapp_configs`.
+- **Endpoints de la barbería:**
+  - `PUT /shop/whatsapp {provider: 'evolution'}`;
+  - `POST /shop/whatsapp/qr`: crea la instancia si hace falta y devuelve el QR, o el número si ya está conectado;
+  - `POST /shop/whatsapp/disconnect`.
+- **Endpoints de la plataforma (solo superadmin):** `GET /platform/whatsapp`, `POST /platform/whatsapp/qr` y `POST /platform/whatsapp/disconnect`. Usan la instancia `EVOLUTION_PLATFORM_INSTANCE`, y se envía con ella si `WHATSAPP_PLATFORM_PROVIDER=evolution`.
+- **Envío:** si la instancia no está `open`, el mensaje queda como envío manual (`wa.me`). Entre envíos de un mismo número hay al menos 2,5 s.
+- **Pruebas:** `evolution.spec.ts` (Evolution simulado) y `test/e2e/whatsapp-evolution.e2e.spec.ts`.
+
 ## Contrato OpenAPI
 
 `pnpm openapi:export` → `openapi.json` (3.0), que `barbersaas-web` copia y genera su cliente con Orval.

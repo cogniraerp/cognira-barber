@@ -84,6 +84,13 @@ export const EnvSchema = z
     WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().default('dev-verify-token'),
     META_APP_SECRET: z.string().optional().default(''),
     WHATSAPP_PLATFORM_WABA_ID: z.string().optional().default(''),
+    /** Evolution API (WhatsApp por QR). URL interna (p. ej. http://api-<uuid>:8080) y su clave global. */
+    EVOLUTION_URL: z.union([z.url(), z.literal('')]).default(''),
+    EVOLUTION_API_KEY: z.string().default(''),
+    /** Instancia de Evolution del número de Cognira (avisos de la plataforma). */
+    EVOLUTION_PLATFORM_INSTANCE: z.string().default('cognira-plataforma'),
+    /** Con qué se envía el WhatsApp de la plataforma: cloud (Meta, oficial) o evolution (QR). */
+    WHATSAPP_PLATFORM_PROVIDER: z.enum(['cloud', 'evolution']).default('cloud'),
     WHATSAPP_GRAPH_VERSION: z.string().default('v21.0'),
     /** Cada cuánto el worker busca mensajes pendientes. */
     NOTIFICATIONS_POLL_MS: z.coerce.number().int().min(200).default(2000),

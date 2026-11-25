@@ -67,6 +67,21 @@ api.staging.barber    A   172.212.202.62
 
 Usa los **Scheduled Backups** de la base en Coolify, con destino S3 o R2: diarios y con retención de 14 días. El servicio `backup` de `deploy/` no se usa en Coolify.
 
+## WhatsApp por QR (Evolution API)
+
+Cada barbería vincula **su propio número** en **Mensajes → Conexión → WhatsApp con QR**. El número de Cognira (para los avisos de cobranza) se vincula en **Plataforma → WhatsApp**.
+
+- **Servicio en Coolify:** la plantilla "Evolution API" (v2.3.7 con su Redis y su Postgres), **sin dominio público**. Nuestra API le habla por la red interna `coolify`.
+- **Variables de la app:**
+
+| Variable | Valor |
+|---|---|
+| `EVOLUTION_URL` | `http://api-<uuid-del-servicio>:8080` (host interno del contenedor `api` del servicio) |
+| `EVOLUTION_API_KEY` | la variable `SERVICE_PASSWORD_AUTHENTICATIONAPIKEY` del servicio Evolution |
+| `WHATSAPP_PLATFORM_PROVIDER` | `evolution` (número de Cognira por QR) o `cloud` (Meta) |
+
+- **Riesgo:** es una conexión no oficial. Un número puede ser bloqueado si envía mucho o recibe reportes. Por eso la app solo manda mensajes de servicio, con pausas de 2,5 s entre envíos de un mismo número. Si el número está desvinculado, el mensaje queda como envío manual (`wa.me`).
+
 ## 6. Despliegue continuo (GitHub Actions)
 
 El servidor **no compila**. `.github/workflows/deploy.yml` corre las pruebas, compila las imágenes en GitHub, las sube a `ghcr.io/cogniraerp/cognira-barber-{api,migrate,web}` y le pide a Coolify que despliegue. Coolify solo descarga las imágenes (`IMAGE_TAG`: `staging` o `prod`).

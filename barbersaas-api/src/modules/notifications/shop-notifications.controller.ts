@@ -15,7 +15,7 @@ import { ApiBearerAuth, ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
 import { ZodResponse } from 'nestjs-zod';
 import { AuditService } from '../../common/audit/audit.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
-import { AppError } from '../../common/errors/app-error';
+import { AppError, ErrorCode } from '../../common/errors/app-error';
 import { pageArgs } from '../../common/http/zod';
 import { UuidPipe } from '../../common/http/uuid.pipe';
 import { PlanLimitsService } from '../../common/plan-limits/plan-limits.service';
@@ -44,8 +44,10 @@ import {
   TestResultDto,
   UsageDto,
   WhatsAppConfigDto,
+  WhatsAppQrDto,
 } from './notifications.dto';
 import { ProviderError, type CloudApiCredentials, type TwilioCredentials } from './providers/types';
+import { instanceNameFor, type EvolutionCredentials, type QrResult } from './providers/evolution';
 import { WhatsAppCloudSender } from './providers/whatsapp-cloud';
 import { SenderRegistry } from './sender-registry';
 import {
@@ -120,7 +122,12 @@ export class ShopNotificationsController {
           : dto.provider === 'twilio'
             ? dto.twilio
             : undefined;
-      if (dto.provider === 'cloud_api' || dto.provider === 'twilio') {
+      if (dto.provider === 'evolution') {
+        // Su propia instancia en Evolution: no hay credenciales que pedir, solo escanear el QR.
+        const enc = this.crypto.encryptJson({ instanceName: instanceNameFor(t.barbershopId) });
+        credentialsEnc = new Uint8Array(enc.data);
+        keyVersion = enc.keyVersion;
+      } else if (dto.provider === 'cloud_api' || dto.provider === 'twilio') {
         if (credentials) {
           const enc = this.crypto.encryptJson(credentials);
           credentialsEnc = new Uint8Array(enc.data);
@@ -198,6 +205,78 @@ export class ShopNotificationsController {
   }
 
   /** Envía un mensaje de prueba al número indicado (no cuenta para el límite del plan). */
+  /** WhatsApp por QR (Evolution): crea la instancia si hace falta y devuelve el QR, o el número si ya está conectado. */
+  @Post('whatsapp/qr')
+  @RequirePermissions('whatsapp.manage')
+  @HttpCode(HttpStatus.OK)
+  @ZodResponse({ type: WhatsAppQrDto })
+  async whatsappQr(@CurrentTenant() t: TenantContext) {
+    const cfg = await this.prisma.run(tenantDb(t), (tx) =>
+      tx.whatsappConfig.findUnique({ where: { barbershopId: t.barbershopId } }),
+    );
+    if (cfg?.provider !== 'evolution')
+      throw AppError.conflict('Primero elige "WhatsApp con QR" y guarda');
+    const instance = this.senders.creds<EvolutionCredentials>(cfg).instanceName;
+    let r: QrResult;
+    try {
+      r = await this.senders.evolution().qr(instance);
+    } catch (e) {
+      throw new AppError(ErrorCode.GATEWAY_ERROR, HttpStatus.BAD_GATEWAY, (e as Error).message);
+    }
+    await this.prisma.run(tenantDb(t), async (tx) => {
+      const connected = r.state === 'open';
+      await tx.whatsappConfig.update({
+        where: { barbershopId: t.barbershopId },
+        data: connected
+          ? {
+              status: 'ok',
+              displayPhone: r.phone,
+              verifiedAt: cfg.verifiedAt ?? new Date(),
+              lastError: null,
+            }
+          : { status: 'unverified', displayPhone: null, verifiedAt: null },
+      });
+      if (connected && cfg.status !== 'ok')
+        await this.audit.record(tx, {
+          action: 'shop.whatsapp.qr_linked',
+          barbershopId: t.barbershopId,
+          diff: { phone: r.phone },
+        });
+    });
+    return r;
+  }
+
+  /** Desvincula el WhatsApp (cierra la sesión en Evolution). Los mensajes pasan a envío manual. */
+  @Post('whatsapp/disconnect')
+  @RequirePermissions('whatsapp.manage')
+  @HttpCode(HttpStatus.OK)
+  @ZodResponse({ type: WhatsAppConfigDto })
+  async whatsappDisconnect(@CurrentTenant() t: TenantContext) {
+    const cfg = await this.prisma.run(tenantDb(t), (tx) =>
+      tx.whatsappConfig.findUnique({ where: { barbershopId: t.barbershopId } }),
+    );
+    if (cfg?.provider !== 'evolution')
+      throw AppError.conflict('No hay un WhatsApp con QR vinculado');
+    try {
+      await this.senders
+        .evolution()
+        .logout(this.senders.creds<EvolutionCredentials>(cfg).instanceName);
+    } catch (e) {
+      throw new AppError(ErrorCode.GATEWAY_ERROR, HttpStatus.BAD_GATEWAY, (e as Error).message);
+    }
+    return this.prisma.run(tenantDb(t), async (tx) => {
+      const row = await tx.whatsappConfig.update({
+        where: { barbershopId: t.barbershopId },
+        data: { status: 'unverified', displayPhone: null, verifiedAt: null, lastError: null },
+      });
+      await this.audit.record(tx, {
+        action: 'shop.whatsapp.qr_unlinked',
+        barbershopId: t.barbershopId,
+      });
+      return this.view(row);
+    });
+  }
+
   @Post('whatsapp/test')
   @RequirePermissions('whatsapp.manage')
   @HttpCode(HttpStatus.OK)
@@ -512,7 +591,7 @@ export class ShopNotificationsController {
 
   private view(
     row: {
-      provider: 'platform' | 'cloud_api' | 'twilio' | 'wa_me';
+      provider: 'platform' | 'cloud_api' | 'twilio' | 'wa_me' | 'evolution';
       status: 'unverified' | 'ok' | 'error';
       displayPhone: string | null;
       verifiedAt: Date | null;

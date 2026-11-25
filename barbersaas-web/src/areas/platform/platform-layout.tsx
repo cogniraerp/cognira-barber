@@ -1,4 +1,4 @@
-import { BookOpenText, CreditCard, FileText, Gauge, HandCoins, Layers, LogOut, Store } from 'lucide-react';
+import { BookOpenText, CreditCard, FileText, Gauge, HandCoins, Layers, LogOut, MessageCircle, Store } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, NavLink, Outlet } from 'react-router';
 import { BrandMark, Initials, Wordmark } from '@/components/brand';
@@ -16,6 +16,7 @@ const NAV = [
   { to: 'facturacion', label: 'nav.billing', icon: CreditCard, superOnly: true },
   { to: 'cobranza', label: 'nav.collections', icon: HandCoins, superOnly: true },
   { to: 'reclamaciones', label: 'nav.complaints', icon: BookOpenText },
+  { to: 'whatsapp', label: 'nav.platformWhatsapp', icon: MessageCircle, superOnly: true },
   { to: 'auditoria', label: 'nav.audit', icon: FileText },
 ];
 

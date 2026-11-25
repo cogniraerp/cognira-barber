@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { IsoDate, paginated, PaginationQuerySchema } from '../../common/http/zod';
 import { NotificationSettingsSchema } from '../shop/settings.schemas';
 
-const Provider = z.enum(['platform', 'cloud_api', 'twilio', 'wa_me']);
+const Provider = z.enum(['platform', 'cloud_api', 'twilio', 'wa_me', 'evolution']);
 const Event = z.enum([
   'booking_requested',
   'booking_confirmed',
@@ -150,3 +150,12 @@ export class UsageDto extends createZodDto(
     }),
   }),
 ) {}
+
+/** QR para vincular el WhatsApp de la barbería (Evolution). */
+export const WhatsAppQrSchema = z.object({
+  state: z.enum(['open', 'connecting', 'close', 'missing']),
+  qr: z.string().nullable(),
+  pairingCode: z.string().nullable(),
+  phone: z.string().nullable(),
+});
+export class WhatsAppQrDto extends createZodDto(WhatsAppQrSchema) {}

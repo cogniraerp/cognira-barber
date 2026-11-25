@@ -3,6 +3,8 @@ import { CheckCircle2, ExternalLink, RotateCcw, Send, XCircle } from 'lucide-rea
 import { useEffect, useState } from 'react';
 import { isApiError } from '@/api/errors';
 import {
+  shopNotificationsControllerWhatsappDisconnect,
+  shopNotificationsControllerWhatsappQr,
   useShopNotificationsControllerGetSettings,
   useShopNotificationsControllerGetWhatsApp,
   useShopNotificationsControllerLogs,
@@ -19,6 +21,7 @@ import {
   useShopNotificationsControllerUsage,
   useShopNotificationsControllerVerify,
 } from '@/api/generated/endpoints';
+import { QrLink } from '@/components/whatsapp/qr-link';
 import type { NotificationSettingsDto, WhatsAppConfigDto } from '@/api/generated/model';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
@@ -83,10 +86,13 @@ function ConnectionEditor({ initial, onSaved }: { initial: WhatsAppConfigDto; on
       : provider === 'twilio' ? { provider, ...(twilio.authToken || !sameProvider ? { twilio } : {}) }
       : { provider };
     const ok = await set.mutateAsync({ data }).then(() => true, () => false);
-    if (ok) verify.mutate();
+    // Con QR no hay nada que verificar todavía: al guardar aparece el código para escanear.
+    if (ok && provider === 'evolution') await refresh();
+    else if (ok) verify.mutate();
   };
 
   const OPTIONS = [
+    ['evolution', 'WhatsApp con QR (tu número) · recomendado', 'Vinculas el WhatsApp de la barbería escaneando un código, como en WhatsApp Web. Los clientes reciben los mensajes desde tu número.'],
     ['platform', 'Número de Cognira Barber', 'Los mensajes salen del número de la plataforma con el nombre de tu barbería. Sin configurar nada.'],
     ['wa_me', 'Enlace wa.me (manual)', 'Sin API: cada mensaje queda listo en el Registro con un enlace; lo envías tú desde tu WhatsApp con un toque.'],
     ['cloud_api', 'WhatsApp Cloud API (tu número)', 'Tu propio número de WhatsApp Business conectado a Meta. Requiere una cuenta de Meta Business.'],
@@ -122,9 +128,20 @@ function ConnectionEditor({ initial, onSaved }: { initial: WhatsAppConfigDto; on
             <div className="sm:col-span-2"><Field label="Auth token" error={fe['twilio.authToken']} hint={sameProvider ? 'Guardado y cifrado. Déjalo vacío para conservarlo.' : 'Se guarda cifrado.'}>{(p) => <Input {...p} type="password" autoComplete="off" value={twilio.authToken} onChange={(e) => setTwilio({ ...twilio, authToken: e.target.value })} />}</Field></div>
           </div>
         )}
+        {provider === 'evolution' && cfg.data.provider === 'evolution' && (
+          <QrLink
+            phone={cfg.data.displayPhone}
+            connected={cfg.data.status === 'ok'}
+            requestQr={() => shopNotificationsControllerWhatsappQr()}
+            disconnect={async () => { await shopNotificationsControllerWhatsappDisconnect(); await refresh(); }}
+            onLinked={() => { void refresh(); saved('WhatsApp vinculado'); onSaved?.(); }}
+          />
+        )}
         {set.error && !Object.keys(fe).length ? <Alert title={errorMessage(set.error, i18n.t)} /> : null}
         {cfg.data.status === 'error' && cfg.data.lastError && <Alert title="No se pudo verificar la conexión">{cfg.data.lastError}</Alert>}
-        <div className="flex justify-end"><Button loading={set.isPending || verify.isPending} onClick={() => void saveAndVerify()}>Guardar y verificar</Button></div>
+        {!(provider === 'evolution' && cfg.data.provider === 'evolution') && (
+          <div className="flex justify-end"><Button loading={set.isPending || verify.isPending} onClick={() => void saveAndVerify()}>{provider === 'evolution' ? 'Guardar y mostrar el QR' : 'Guardar y verificar'}</Button></div>
+        )}
       </Section>
 
       <Section title="Probar">

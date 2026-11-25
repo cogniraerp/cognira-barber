@@ -135,6 +135,8 @@ enum MessagingProvider {
   cloud_api
   twilio
   wa_me
+  /// WhatsApp por QR con Evolution API (número propio de la barbería; no oficial).
+  evolution
 
   @@map("messaging_provider")
 }

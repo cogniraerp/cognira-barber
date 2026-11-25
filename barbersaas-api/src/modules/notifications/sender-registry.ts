@@ -4,6 +4,7 @@ import { ENV } from '../../config/config.module';
 import type { Env } from '../../config/env';
 import type { MessagingProvider } from '../../generated/prisma/enums';
 import { ConsoleSender, ResendSender, WaMeSender } from './providers/simple';
+import { EvolutionClient, EvolutionSender, type EvolutionCredentials } from './providers/evolution';
 import { SmtpSender } from './providers/smtp';
 import { TwilioSender } from './providers/twilio';
 import {
@@ -52,6 +53,11 @@ export class SenderRegistry {
           this.fetchFn,
           `${this.env.PUBLIC_API_URL.replace(/\/$/, '')}/v1/webhooks/twilio`,
         );
+      case 'evolution':
+        return new EvolutionSender(
+          this.evolution(),
+          this.creds<EvolutionCredentials>(config).instanceName,
+        );
       case 'platform':
         return this.platform();
     }
@@ -59,6 +65,8 @@ export class SenderRegistry {
 
   /** Número de la plataforma (planes sin API propia). Sin credenciales: consola en desarrollo, error en producción. */
   platform(): Sender {
+    if (this.env.WHATSAPP_PLATFORM_PROVIDER === 'evolution')
+      return new EvolutionSender(this.evolution(), this.env.EVOLUTION_PLATFORM_INSTANCE);
     if (this.env.WHATSAPP_PLATFORM_PHONE_NUMBER_ID && this.env.WHATSAPP_PLATFORM_ACCESS_TOKEN) {
       return new WhatsAppCloudSender(
         {
@@ -94,6 +102,11 @@ export class SenderRegistry {
     if (this.env.NODE_ENV === 'production')
       throw new ProviderError('Email no configurado (SMTP_HOST o RESEND_API_KEY)', false);
     return new ConsoleSender('email');
+  }
+
+  /** Cliente de Evolution API (WhatsApp por QR). */
+  evolution(): EvolutionClient {
+    return new EvolutionClient(this.env.EVOLUTION_URL, this.env.EVOLUTION_API_KEY, this.fetchFn);
   }
 
   creds<T>(config: WhatsAppConfigRow | null): T {

@@ -299,6 +299,64 @@
         ]
       }
     },
+    "/v1/shop/whatsapp/qr": {
+      "post": {
+        "operationId": "ShopNotificationsController_whatsappQr",
+        "parameters": [],
+        "responses": {
+          "default": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhatsAppQrDto_Output"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "tenant": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "shop · WhatsApp y notificaciones"
+        ]
+      }
+    },
+    "/v1/shop/whatsapp/disconnect": {
+      "post": {
+        "operationId": "ShopNotificationsController_whatsappDisconnect",
+        "parameters": [],
+        "responses": {
+          "default": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhatsAppConfigDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "tenant": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "shop · WhatsApp y notificaciones"
+        ]
+      }
+    },
     "/v1/shop/whatsapp/test": {
       "post": {
         "operationId": "ShopNotificationsController_test",
@@ -1494,6 +1552,84 @@
         ],
         "tags": [
           "shop"
+        ]
+      }
+    },
+    "/v1/platform/whatsapp": {
+      "get": {
+        "operationId": "PlatformWhatsAppController_status",
+        "parameters": [],
+        "responses": {
+          "default": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformWhatsAppDto_Output"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/whatsapp/qr": {
+      "post": {
+        "operationId": "PlatformWhatsAppController_qr",
+        "parameters": [],
+        "responses": {
+          "default": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhatsAppQrDto_Output"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/whatsapp/disconnect": {
+      "post": {
+        "operationId": "PlatformWhatsAppController_disconnect",
+        "parameters": [],
+        "responses": {
+          "default": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformWhatsAppDto_Output"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "platform"
         ]
       }
     },
@@ -9285,7 +9421,8 @@
               "platform",
               "cloud_api",
               "twilio",
-              "wa_me"
+              "wa_me",
+              "evolution"
             ]
           },
           "status": {
@@ -9339,7 +9476,8 @@
               "platform",
               "cloud_api",
               "twilio",
-              "wa_me"
+              "wa_me",
+              "evolution"
             ]
           },
           "cloudApi": {
@@ -9392,6 +9530,39 @@
         "required": [
           "provider"
         ]
+      },
+      "WhatsAppQrDto_Output": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "connecting",
+              "close",
+              "missing"
+            ]
+          },
+          "qr": {
+            "type": "string",
+            "nullable": true
+          },
+          "pairingCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "state",
+          "qr",
+          "pairingCode",
+          "phone"
+        ],
+        "additionalProperties": false
       },
       "TestMessageDto": {
         "type": "object",
@@ -11407,6 +11578,46 @@
           "permissions",
           "impersonatedBy",
           "plan"
+        ],
+        "additionalProperties": false
+      },
+      "PlatformWhatsAppDto_Output": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "cloud",
+              "evolution"
+            ]
+          },
+          "evolutionConfigured": {
+            "type": "boolean"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "connecting",
+              "close",
+              "missing",
+              "unknown"
+            ]
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "provider",
+          "evolutionConfigured",
+          "instance",
+          "state",
+          "phone"
         ],
         "additionalProperties": false
       },

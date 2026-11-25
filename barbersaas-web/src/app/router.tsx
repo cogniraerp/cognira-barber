@@ -203,6 +203,7 @@ function appRoutes(): RouteObject[] {
                 { path: 'facturacion', lazy: lazy(() => import('@/areas/platform/billing-page'), (m) => m.BillingPage) },
                 { path: 'cobranza', lazy: lazy(() => import('@/areas/platform/collections-page'), (m) => m.CollectionsPage) },
                 { path: 'reclamaciones', lazy: lazy(() => import('@/areas/platform/complaints-page'), (m) => m.ComplaintsPage) },
+                { path: 'whatsapp', lazy: lazy(() => import('@/areas/platform/whatsapp-page'), (m) => m.PlatformWhatsAppPage) },
                 { path: 'auditoria', lazy: lazy(() => import('@/areas/platform/audit-page'), (m) => m.AuditPage) },
               ],
             },
