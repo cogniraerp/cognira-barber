@@ -72,7 +72,11 @@ Usa los **Scheduled Backups** de la base en Coolify, con destino S3 o R2: diario
 Cada barbería vincula **su propio número** en **Mensajes → Conexión → WhatsApp con QR**. El número de Cognira (para los avisos de cobranza) se vincula en **Plataforma → WhatsApp**.
 
 - **Servicio en Coolify:** un **solo Evolution para todos tus sistemas**, en el proyecto **"Servicios compartidos" → `evolution`** (plantilla v2.3.7 con su Redis y su Postgres).
-  - No tiene dominio público: su dominio es `http://evolution.internal`, que no existe en internet.
+  - **Dominio público:** `https://evolution.codecraft.net.pe` (panel en `/manager`, se entra con la clave de API), **restringido por IP** con un middleware `ipallowlist` de Traefik, en las etiquetas `evo-ipallow` y `evo-secure` del compose del servicio.
+    - Hoy autoriza: `38.190.127.0/24` (la conexión del dueño, que sale por varias IP de ese bloque), `172.212.202.62` (este servidor) y las redes privadas.
+    - Cualquier otra IP recibe **403**.
+    - **Para agregar un servidor u oficina:** en Coolify, **Servicios compartidos → evolution → Edit Compose File**, agrega la IP (`x.x.x.x/32`) a `ipallowlist.sourcerange` separada por coma, y pulsa **Save** y **Restart**.
+  - Los sistemas de **este** servidor siguen usando la dirección interna (más rápida, no sale a internet).
   - Se llega por la red interna `coolify` en `http://api-jiobby8ze17ps83db42yd1il:8080`.
   - **Instancias por sistema:** Cognira usa `cognira-<barbershopId>` y `cognira-plataforma` (en staging, `cognira-plataforma-staging`). Cada sistema usa su propio prefijo, por ejemplo `tienda-…` o `presupuesto-…`.
   - **Configuración del servicio (ya hecha):**
