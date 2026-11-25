@@ -71,7 +71,14 @@ Usa los **Scheduled Backups** de la base en Coolify, con destino S3 o R2: diario
 
 Cada barbería vincula **su propio número** en **Mensajes → Conexión → WhatsApp con QR**. El número de Cognira (para los avisos de cobranza) se vincula en **Plataforma → WhatsApp**.
 
-- **Servicio en Coolify:** la plantilla "Evolution API" (v2.3.7 con su Redis y su Postgres), **sin dominio público**. Nuestra API le habla por la red interna `coolify`.
+- **Servicio en Coolify:** un **solo Evolution para todos tus sistemas**, en el proyecto **"Servicios compartidos" → `evolution`** (plantilla v2.3.7 con su Redis y su Postgres).
+  - No tiene dominio público: su dominio es `http://evolution.internal`, que no existe en internet.
+  - Se llega por la red interna `coolify` en `http://api-jiobby8ze17ps83db42yd1il:8080`.
+  - **Instancias por sistema:** Cognira usa `cognira-<barbershopId>` y `cognira-plataforma` (en staging, `cognira-plataforma-staging`). Cada sistema usa su propio prefijo, por ejemplo `tienda-…` o `presupuesto-…`.
+  - **Configuración del servicio (ya hecha):**
+    - en su compose, los hosts `postgres` y `redis` se cambiaron por `postgres-<uuid>` y `redis-<uuid>`, porque en la red `coolify` chocan con los de Coolify;
+    - `CONFIG_SESSION_PHONE_CLIENT=Cognira` es el nombre que aparece en "Dispositivos vinculados".
+  - **Backups:** respalda su Postgres desde Coolify. Ahí guarda las sesiones; si se pierde, hay que volver a escanear los QR.
 - **Variables de la app:**
 
 | Variable | Valor |
