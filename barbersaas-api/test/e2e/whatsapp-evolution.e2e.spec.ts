@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { SenderRegistry } from '../../src/modules/notifications/sender-registry';
+import type { OutgoingMessage } from '../../src/modules/notifications/providers/types';
+import { WhatsAppHealthService } from '../../src/modules/notifications/whatsapp-health.service';
 import { HTTP_FETCH } from '../../src/modules/notifications/providers/types';
 import { createTenant, type TenantFixture } from '../support/fixtures';
 import { createTestApp, type TestApp } from '../support/test-app';
@@ -162,6 +165,55 @@ describe('WhatsApp con QR (Evolution) por barbería', () => {
       await shop(tokenA, A.slug).post('/v1/shop/whatsapp/test', { to: '+51911222333' }).expect(200)
     ).body;
     expect(test).toMatchObject({ status: 'manual' });
+  });
+});
+
+describe('monitoreo: si el WhatsApp de una barbería se desvincula', () => {
+  it('lo marca, avisa al dueño por correo una sola vez y, al volver, queda conectado', async () => {
+    const outbox: OutgoingMessage[] = [];
+    vi.spyOn(t.app.get(SenderRegistry), 'email').mockReturnValue({
+      name: 'test',
+      send: (m: OutgoingMessage) => {
+        outbox.push(m);
+        return Promise.resolve({ status: 'sent' as const, providerMessageId: null });
+      },
+    });
+    const inst = `cognira-${A.barbershopId}`;
+    await shop(tokenA, A.slug).put('/v1/shop/whatsapp', { provider: 'evolution' }).expect(200);
+    link(inst, '51987000111');
+    await shop(tokenA, A.slug).post('/v1/shop/whatsapp/qr').expect(200);
+    const health = t.app.get(WhatsAppHealthService);
+    expect(await health.check()).toMatchObject({ disconnected: 0 });
+
+    instances.set(inst, { state: 'connecting', jid: null }); // se desvinculó en el celular
+    expect((await health.check()).disconnected).toBe(1);
+    expect((await shop(tokenA, A.slug).get('/v1/shop/whatsapp').expect(200)).body).toMatchObject({
+      status: 'error',
+      lastError: expect.stringMatching(/desvinculó/),
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const mail = outbox.filter((m) => m.subject?.includes('se desconectó'));
+    expect(mail).toHaveLength(1);
+    expect(mail[0]!.body).toContain(`/s/${A.slug}/mensajes`);
+    // Sigue caído: no se repite el aviso.
+    expect((await health.check()).disconnected).toBe(0);
+
+    link(inst, '51987000111'); // lo volvió a escanear
+    expect((await health.check()).reconnected).toBe(1);
+    expect((await shop(tokenA, A.slug).get('/v1/shop/whatsapp').expect(200)).body).toMatchObject({
+      status: 'ok',
+      lastError: null,
+    });
+  });
+
+  it('si Evolution no responde no marca a nadie como desconectado', async () => {
+    const health = t.app.get(WhatsAppHealthService);
+    vi.spyOn(t.app.get(SenderRegistry), 'evolution').mockReturnValue({
+      configured: true,
+      state: () => Promise.reject(new Error('caído')),
+    } as never);
+    expect(await health.check()).toMatchObject({ checked: 0, disconnected: 0 });
+    vi.restoreAllMocks();
   });
 });
 

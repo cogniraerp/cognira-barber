@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { DispatcherService } from './dispatcher.service';
 import { NotificationsService } from './notifications.service';
 import { HTTP_FETCH } from './providers/types';
+import { WhatsAppHealthService } from './whatsapp-health.service';
 import { SenderRegistry } from './sender-registry';
 import { ShopNotificationsController } from './shop-notifications.controller';
 import { WebhooksController } from './webhooks.controller';
@@ -14,7 +15,14 @@ import { WebhooksController } from './webhooks.controller';
     SenderRegistry,
     NotificationsService,
     DispatcherService,
+    WhatsAppHealthService,
   ],
-  exports: [NotificationsService, DispatcherService, SenderRegistry, HTTP_FETCH],
+  exports: [
+    NotificationsService,
+    DispatcherService,
+    SenderRegistry,
+    HTTP_FETCH,
+    WhatsAppHealthService,
+  ],
 })
 export class NotificationsModule {}

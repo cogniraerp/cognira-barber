@@ -11,6 +11,7 @@ import { DunningService } from '../modules/billing/dunning.service';
 import { DepositsService } from '../modules/deposits/deposits.service';
 import { RefundsService } from '../modules/payments/refunds.service';
 import { DispatcherService } from '../modules/notifications/dispatcher.service';
+import { WhatsAppHealthService } from '../modules/notifications/whatsapp-health.service';
 
 /** Bucle del worker: procesa lotes mientras haya trabajo; si no, espera NOTIFICATIONS_POLL_MS. */
 @Injectable()
@@ -25,6 +26,7 @@ export class WorkerService implements OnApplicationBootstrap, OnApplicationShutd
     private readonly dunning: DunningService,
     private readonly deposits: DepositsService,
     private readonly refunds: RefundsService,
+    private readonly whatsappHealth: WhatsAppHealthService,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -75,6 +77,8 @@ export class WorkerService implements OnApplicationBootstrap, OnApplicationShutd
         await this.deposits.expireDue();
         // Devoluciones por la pasarela (adelantos y ventas anuladas pagadas en línea).
         await this.refunds.processDue();
+        // WhatsApp por QR: avisa al dueño si su número se desvinculó (revisa cada 10 min).
+        await this.whatsappHealth.checkDue();
       } catch (e) {
         this.logger.error(`Error en cobranza: ${(e as Error).message}`);
       }

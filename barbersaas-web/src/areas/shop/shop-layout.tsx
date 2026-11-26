@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router';
 import { EmailVerifyBanner } from '@/components/account/email-verify-banner';
+import { WhatsAppDisconnectedBanner } from '@/components/whatsapp/disconnected-banner';
 import { SuspendedScreen } from './suspended-screen';
 import { BrandMark, Initials, Wordmark } from '@/components/brand';
 import { sideItem } from '@/components/side-item';
@@ -269,6 +270,7 @@ function ShopShell({ slug }: { slug: string }) {
           </header>
           {c.impersonatedBy && <ImpersonationBanner role={c.impersonatedBy} />}
           {!c.impersonatedBy && <EmailVerifyBanner />}
+          {perms.has('whatsapp.manage') && <WhatsAppDisconnectedBanner slug={slug} />}
           {suspended && onBilling && (
             <div className="bg-red-50 px-4 py-2 text-center text-sm text-red-800">{t('shop.suspended')}</div>
           )}
