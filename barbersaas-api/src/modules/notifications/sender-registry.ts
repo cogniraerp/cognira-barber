@@ -57,16 +57,23 @@ export class SenderRegistry {
         return new EvolutionSender(
           this.evolution(),
           this.creds<EvolutionCredentials>(config).instanceName,
+          {
+            replyHint: this.env.EVOLUTION_REPLY_HINT,
+          },
         );
       case 'platform':
-        return this.platform();
+        // Con Evolution, el número de Cognira NO envía por las barberías: todas desde un solo número no
+        // oficial es lo que más rápido termina en bloqueo. Sin número propio, el envío es manual.
+        return this.platformAvailableForShops() ? this.platform() : new WaMeSender();
     }
   }
 
   /** Número de la plataforma (planes sin API propia). Sin credenciales: consola en desarrollo, error en producción. */
   platform(): Sender {
     if (this.env.WHATSAPP_PLATFORM_PROVIDER === 'evolution')
-      return new EvolutionSender(this.evolution(), this.env.EVOLUTION_PLATFORM_INSTANCE);
+      return new EvolutionSender(this.evolution(), this.env.EVOLUTION_PLATFORM_INSTANCE, {
+        gapMs: [this.env.EVOLUTION_MIN_GAP_SEC * 1000, this.env.EVOLUTION_MAX_GAP_SEC * 1000],
+      });
     if (this.env.WHATSAPP_PLATFORM_PHONE_NUMBER_ID && this.env.WHATSAPP_PLATFORM_ACCESS_TOKEN) {
       return new WhatsAppCloudSender(
         {
@@ -102,6 +109,11 @@ export class SenderRegistry {
     if (this.env.NODE_ENV === 'production')
       throw new ProviderError('Email no configurado (SMTP_HOST o RESEND_API_KEY)', false);
     return new ConsoleSender('email');
+  }
+
+  /** ¿Las barberías pueden usar el número de Cognira para escribir a sus clientes? (no con Evolution) */
+  platformAvailableForShops(): boolean {
+    return this.env.WHATSAPP_PLATFORM_PROVIDER !== 'evolution';
   }
 
   /** Cliente de Evolution API (WhatsApp por QR). */

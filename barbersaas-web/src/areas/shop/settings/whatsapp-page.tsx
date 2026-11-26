@@ -107,7 +107,7 @@ function ConnectionEditor({ initial, onSaved }: { initial: WhatsAppConfigDto; on
       >
         <fieldset className="grid gap-2">
           <legend className="sr-only">Proveedor</legend>
-          {OPTIONS.map(([v, title, desc]) => (
+          {OPTIONS.filter(([v]) => v !== 'platform' || cfg.data.platformAvailable || cfg.data.provider === 'platform').map(([v, title, desc]) => (
             <label key={v} className={cn('flex cursor-pointer gap-3 rounded-lg border p-3', provider === v && 'border-foreground bg-muted/40')}>
               <input type="radio" name="provider" className="mt-1" checked={provider === v} onChange={() => setProvider(v)} />
               <span className="grid gap-0.5"><span className="font-medium">{title}</span><span className="text-sm text-muted-foreground">{desc}</span></span>
@@ -127,6 +127,12 @@ function ConnectionEditor({ initial, onSaved }: { initial: WhatsAppConfigDto; on
             <Field label="Número de WhatsApp" error={fe['twilio.fromNumber']}>{(p) => <Input {...p} value={twilio.fromNumber} onChange={(e) => setTwilio({ ...twilio, fromNumber: e.target.value })} placeholder="+14155550100" />}</Field>
             <div className="sm:col-span-2"><Field label="Auth token" error={fe['twilio.authToken']} hint={sameProvider ? 'Guardado y cifrado. Déjalo vacío para conservarlo.' : 'Se guarda cifrado.'}>{(p) => <Input {...p} type="password" autoComplete="off" value={twilio.authToken} onChange={(e) => setTwilio({ ...twilio, authToken: e.target.value })} />}</Field></div>
           </div>
+        )}
+        {!cfg.data.platformAvailable && cfg.data.provider === 'platform' && (
+          <Alert tone="info" title="Conecta el WhatsApp de tu barbería">
+            Para cuidar tu número y el de todos, los mensajes a tus clientes salen desde tu propio WhatsApp. Mientras no lo conectes,
+            quedan en el Registro para que los envíes a mano. Elige "WhatsApp con QR" y escanea el código.
+          </Alert>
         )}
         {provider === 'evolution' && cfg.data.provider === 'evolution' && (
           <QrLink

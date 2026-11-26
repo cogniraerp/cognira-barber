@@ -55,3 +55,13 @@ export async function readError(res: Response): Promise<string> {
 }
 
 export const isRetryableStatus = (s: number) => s === 429 || s >= 500;
+
+/** No se envía ahora (ritmo anti-bloqueo): reprogramar para `until` sin gastar un intento. */
+export class DeferError extends Error {
+  constructor(
+    readonly until: Date,
+    reason: string,
+  ) {
+    super(`Reprogramado: ${reason}`);
+  }
+}

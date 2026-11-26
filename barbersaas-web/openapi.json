@@ -9433,6 +9433,9 @@
               "error"
             ]
           },
+          "platformAvailable": {
+            "type": "boolean"
+          },
           "displayPhone": {
             "type": "string",
             "nullable": true
@@ -9460,6 +9463,7 @@
         "required": [
           "provider",
           "status",
+          "platformAvailable",
           "displayPhone",
           "verifiedAt",
           "lastError",

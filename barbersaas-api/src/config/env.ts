@@ -89,6 +89,19 @@ export const EnvSchema = z
     EVOLUTION_API_KEY: z.string().default(''),
     /** Instancia de Evolution del número de Cognira (avisos de la plataforma). */
     EVOLUTION_PLATFORM_INSTANCE: z.string().default('cognira-plataforma'),
+    /** Anti-bloqueo por número vinculado por QR (ver providers/evolution-pacing.ts). */
+    EVOLUTION_MIN_GAP_SEC: z.coerce.number().min(0).default(8),
+    EVOLUTION_MAX_GAP_SEC: z.coerce.number().min(0).default(18),
+    EVOLUTION_HOURLY_CAP: z.coerce.number().int().min(1).default(40),
+    EVOLUTION_DAILY_CAP: z.coerce.number().int().min(1).default(250),
+    EVOLUTION_WARMUP_DAYS: z.coerce.number().int().min(0).default(3),
+    EVOLUTION_WARMUP_DAILY_CAP: z.coerce.number().int().min(1).default(60),
+    EVOLUTION_QUIET_HOURS: z
+      .string()
+      .regex(/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$|^$/)
+      .default('21:30-07:30'),
+    /** Agrega "Si tienes alguna duda, responde a este mensaje" (fomenta respuestas: mejor reputación). */
+    EVOLUTION_REPLY_HINT: bool.default(true),
     /** Con qué se envía el WhatsApp de la plataforma: cloud (Meta, oficial) o evolution (QR). */
     WHATSAPP_PLATFORM_PROVIDER: z.enum(['cloud', 'evolution']).default('cloud'),
     WHATSAPP_GRAPH_VERSION: z.string().default('v21.0'),

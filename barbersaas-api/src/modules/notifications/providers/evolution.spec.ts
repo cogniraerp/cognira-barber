@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { EvolutionClient, EvolutionSender, instanceNameFor, jidToPhone } from './evolution';
+import {
+  EvolutionClient,
+  EvolutionSender,
+  REPLY_HINT,
+  instanceNameFor,
+  jidToPhone,
+  resetEvolutionChecks,
+} from './evolution';
 import { ProviderError } from './types';
 
 /** Evolution simulado (mismas formas de respuesta que v2.3.7). */
 function fakeEvolution() {
   const instances = new Map<string, { state: 'connecting' | 'open'; jid: string | null }>();
-  const sent: Array<{ instance: string; number: string; text: string }> = [];
+  const sent: Array<{
+    instance: string;
+    number: string;
+    text: string;
+    delay?: number;
+    linkPreview?: boolean;
+  }> = [];
+  const noWhatsApp = new Set<string>();
   const QR = 'data:image/png;base64,iVBORw0KGgo';
   const json = (status: number, body: unknown) =>
     Promise.resolve(new Response(JSON.stringify(body), { status }));
@@ -34,6 +48,13 @@ function fakeEvolution() {
       const n = url.searchParams.get('instanceName')!;
       return json(200, [{ name: n, ownerJid: instances.get(n)?.jid ?? null }]);
     }
+    if (url.pathname.startsWith('/chat/whatsappNumbers/')) {
+      const b = JSON.parse(init?.body as string) as { numbers: string[] };
+      return json(
+        200,
+        b.numbers.map((n) => ({ number: n, exists: !noWhatsApp.has(n) })),
+      );
+    }
     if (url.pathname.startsWith('/message/sendText/')) {
       const b = JSON.parse(init?.body as string) as { number: string; text: string };
       sent.push({ instance: name, ...b });
@@ -47,7 +68,7 @@ function fakeEvolution() {
   }) as unknown as typeof fetch;
   const link = (name: string, phone = '51987654321') =>
     instances.set(name, { state: 'open', jid: `${phone}@s.whatsapp.net` });
-  return { fetchFn, sent, link, QR };
+  return { fetchFn, sent, link, QR, noWhatsApp };
 }
 
 describe('Evolution', () => {
@@ -92,7 +113,12 @@ describe('Evolution', () => {
       status: 'sent',
       providerMessageId: 'msg-1',
     });
-    expect(f.sent[0]).toEqual({ instance: inst, number: '51911222333', text: 'Recordatorio' });
+    expect(f.sent[0]).toMatchObject({
+      instance: inst,
+      number: '51911222333',
+      text: 'Recordatorio',
+      linkPreview: false,
+    });
     expect(await s.verify()).toEqual({ displayPhone: '+51987654321', name: null });
   });
 
@@ -120,5 +146,26 @@ describe('Evolution', () => {
       .catch((e: unknown) => e)) as ProviderError;
     expect(err).toBeInstanceOf(ProviderError);
     expect(err.retryable).toBe(false);
+  });
+
+  it('anti-bloqueo: no escribe a números sin WhatsApp, simula "escribiendo…" e invita a responder', async () => {
+    resetEvolutionChecks();
+    const f = fakeEvolution();
+    f.link('anti');
+    f.noWhatsApp.add('51900000000');
+    const s = new EvolutionSender(new EvolutionClient('http://evo:8080', 'k', f.fetchFn), 'anti', {
+      replyHint: true,
+      typingMs: [1000, 3000],
+      rand: () => 0.5,
+    });
+    const err = (await s
+      .send({ to: '+51900000000', body: 'x' })
+      .catch((e: unknown) => e)) as ProviderError;
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.retryable).toBe(false);
+    expect(f.sent).toHaveLength(0);
+    await s.send({ to: '+51911222333', body: 'Tu cita es mañana' });
+    expect(f.sent[0]).toMatchObject({ delay: 2000, linkPreview: false });
+    expect(f.sent[0]!.text).toBe(`Tu cita es mañana\n\n${REPLY_HINT}`);
   });
 });

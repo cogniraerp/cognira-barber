@@ -91,6 +91,15 @@ Cada barbería vincula **su propio número** en **Mensajes → Conexión → Wha
 | `EVOLUTION_API_KEY` | la variable `SERVICE_PASSWORD_AUTHENTICATIONAPIKEY` del servicio Evolution |
 | `WHATSAPP_PLATFORM_PROVIDER` | `evolution` (número de Cognira por QR) o `cloud` (Meta) |
 
+- **Anti-bloqueo** (cada número se comporta como una persona; todo es configurable):
+  - **pausa aleatoria** de 8 a 18 s entre mensajes del mismo número (`EVOLUTION_MIN_GAP_SEC`, `EVOLUTION_MAX_GAP_SEC`);
+  - **topes**: 40 por hora y 250 por día por número (`EVOLUTION_HOURLY_CAP`, `EVOLUTION_DAILY_CAP`);
+  - **calentamiento**: los primeros 3 días después de vincular, máximo 60 por día (`EVOLUTION_WARMUP_*`);
+  - **horario de descanso**: nada entre 21:30 y 07:30 de Lima; lo que caiga ahí sale por la mañana (`EVOLUTION_QUIET_HOURS`);
+  - **antes de escribir** comprueba que el número tenga WhatsApp; simula "escribiendo…" y no genera vista previa de enlaces;
+  - **invita a responder** ("Si tienes alguna duda, responde a este mensaje"; `EVOLUTION_REPLY_HINT`);
+  - **sin número compartido**: con `WHATSAPP_PLATFORM_PROVIDER=evolution`, el número de Cognira solo envía los avisos a las barberías. Una barbería sin número propio queda en envío manual.
+  - Un mensaje que no puede salir todavía **se reprograma** (no gasta intentos ni bloquea a los demás).
 - **Riesgo:** es una conexión no oficial. Un número puede ser bloqueado si envía mucho o recibe reportes. Por eso la app solo manda mensajes de servicio, con pausas de 2,5 s entre envíos de un mismo número. Si el número está desvinculado, el mensaje queda como envío manual (`wa.me`).
 
 ## 6. Despliegue continuo (GitHub Actions)

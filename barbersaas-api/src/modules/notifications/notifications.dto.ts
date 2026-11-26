@@ -19,6 +19,8 @@ const Status = z.enum(['queued', 'sending', 'manual', 'sent', 'delivered', 'read
 export const WhatsAppConfigSchema = z.object({
   provider: Provider,
   status: z.enum(['unverified', 'ok', 'error']),
+  /** ¿Puede usar el número de Cognira? (no cuando la plataforma usa WhatsApp por QR). */
+  platformAvailable: z.boolean(),
   displayPhone: z.string().nullable(),
   verifiedAt: IsoDate.nullable(),
   lastError: z.string().nullable(),

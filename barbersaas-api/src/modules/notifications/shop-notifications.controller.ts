@@ -603,6 +603,7 @@ export class ShopNotificationsController {
     if (!row)
       return {
         provider: 'platform' as const,
+        platformAvailable: this.senders.platformAvailableForShops(),
         status: 'unverified' as const,
         displayPhone: null,
         verifiedAt: null,
@@ -623,6 +624,7 @@ export class ShopNotificationsController {
     }
     return {
       provider: row.provider,
+      platformAvailable: this.senders.platformAvailableForShops(),
       status: row.status,
       displayPhone: row.displayPhone,
       verifiedAt: row.verifiedAt,

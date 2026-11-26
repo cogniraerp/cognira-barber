@@ -6,7 +6,8 @@ import type { Env } from '../../config/env';
 import type { MessageChannel, MessageEvent } from '../../generated/prisma/enums';
 import { PrismaService, type Tx } from '../../infra/prisma/prisma.service';
 import { readPreferences } from '../shop/settings.schemas';
-import { ProviderError, type OutgoingMessage } from './providers/types';
+import { decide, startOfLimaDay } from './providers/evolution-pacing';
+import { DeferError, ProviderError, type OutgoingMessage } from './providers/types';
 import { SenderRegistry } from './sender-registry';
 import { DEFAULT_TEMPLATES, render, variablesInOrder, type TemplateVars } from './templates';
 
@@ -21,6 +22,8 @@ export interface BatchResult {
   manual: number;
   retried: number;
   failed: number;
+  /** Reprogramados por el ritmo anti-bloqueo (WhatsApp por QR). */
+  deferred: number;
 }
 
 /**
@@ -62,12 +65,22 @@ export class DispatcherService {
       return rows.map((r) => r.id);
     });
 
-    const result: BatchResult = { claimed: ids.length, sent: 0, manual: 0, retried: 0, failed: 0 };
+    const result: BatchResult = {
+      claimed: ids.length,
+      sent: 0,
+      manual: 0,
+      retried: 0,
+      failed: 0,
+      deferred: 0,
+    };
     for (const id of ids) result[await this.deliver(id, now)]++;
     return result;
   }
 
-  private async deliver(id: string, now: Date): Promise<'sent' | 'manual' | 'retried' | 'failed'> {
+  private async deliver(
+    id: string,
+    now: Date,
+  ): Promise<'sent' | 'manual' | 'retried' | 'failed' | 'deferred'> {
     const log = await this.prisma.run({ kind: 'system' }, (tx) =>
       tx.messageLog.findUniqueOrThrow({
         where: { id },
@@ -91,6 +104,8 @@ export class DispatcherService {
         await this.finish(id, { status: 'failed', error: prepared.skip });
         return 'failed';
       }
+      if (prepared.sender.name === 'evolution')
+        await this.pace(log.barbershopId, prepared.linkedAt ?? null, now);
       const r = await prepared.sender.send(prepared.message);
       await this.prisma.run({ kind: 'system', barbershopId: log.barbershopId }, async (tx) => {
         await tx.messageLog.update({
@@ -101,7 +116,7 @@ export class DispatcherService {
             actionUrl: r.actionUrl ?? null,
             provider: prepared.sender.name,
             body: prepared.message.body,
-            sentAt: r.status === 'sent' ? new Date() : null,
+            sentAt: r.status === 'sent' ? now : null,
             lockedAt: null,
             error: null,
           },
@@ -113,6 +128,22 @@ export class DispatcherService {
       });
       return r.status;
     } catch (e) {
+      if (e instanceof DeferError) {
+        // Ritmo anti-bloqueo: vuelve a la cola para más tarde y no cuenta como intento.
+        await this.prisma.run({ kind: 'system' }, (tx) =>
+          tx.messageLog.update({
+            where: { id },
+            data: {
+              status: 'queued',
+              lockedAt: null,
+              scheduledFor: e.until,
+              attempts: { decrement: 1 },
+              error: e.message.slice(0, 500),
+            },
+          }),
+        );
+        return 'deferred';
+      }
       const retryable = !(e instanceof ProviderError) || e.retryable;
       const message = (e as Error).message.slice(0, 500);
       if (retryable && log.attempts < MAX_ATTEMPTS) {
@@ -143,6 +174,43 @@ export class DispatcherService {
   }
 
   /** Arma el mensaje con datos frescos de la cita y la plantilla vigente. */
+  /** Ritmo por número de WhatsApp vinculado por QR: pausas, topes, calentamiento y horario de descanso. */
+  private async pace(barbershopId: string, linkedAt: Date | null, now: Date): Promise<void> {
+    const e = this.env;
+    const where = {
+      barbershopId,
+      channel: 'whatsapp' as const,
+      provider: 'evolution',
+      sentAt: { not: null },
+    };
+    const [last, lastHour, today] = await this.prisma.run({ kind: 'system', barbershopId }, (tx) =>
+      Promise.all([
+        tx.messageLog.findFirst({ where, orderBy: { sentAt: 'desc' }, select: { sentAt: true } }),
+        tx.messageLog.count({
+          where: { ...where, sentAt: { gte: new Date(now.getTime() - 3600_000) } },
+        }),
+        tx.messageLog.count({ where: { ...where, sentAt: { gte: startOfLimaDay(now) } } }),
+      ]),
+    );
+    const d = decide({
+      now,
+      lastSentAt: last?.sentAt ?? null,
+      sentLastHour: lastHour,
+      sentToday: today,
+      linkedAt,
+      cfg: {
+        minGapSec: e.EVOLUTION_MIN_GAP_SEC,
+        maxGapSec: e.EVOLUTION_MAX_GAP_SEC,
+        hourlyCap: e.EVOLUTION_HOURLY_CAP,
+        dailyCap: e.EVOLUTION_DAILY_CAP,
+        warmupDays: e.EVOLUTION_WARMUP_DAYS,
+        warmupDailyCap: e.EVOLUTION_WARMUP_DAILY_CAP,
+        quietHours: e.EVOLUTION_QUIET_HOURS,
+      },
+    });
+    if (!d.ok) throw new DeferError(d.until, d.reason);
+  }
+
   private async prepare(
     tx: Tx,
     log: {
@@ -154,7 +222,12 @@ export class DispatcherService {
     },
     now: Date,
   ): Promise<
-    { skip: string } | { sender: ReturnType<SenderRegistry['email']>; message: OutgoingMessage }
+    | { skip: string }
+    | {
+        sender: ReturnType<SenderRegistry['email']>;
+        message: OutgoingMessage;
+        linkedAt?: Date | null;
+      }
   > {
     if (!log.appointmentId) return { skip: 'Mensaje sin cita asociada' };
     const a = await tx.appointment.findUnique({
@@ -274,6 +347,6 @@ export class DispatcherService {
         params: variablesInOrder(body).map((v) => vars[v]),
       };
     }
-    return { sender, message };
+    return { sender, message, linkedAt: cfg?.verifiedAt ?? null };
   }
 }

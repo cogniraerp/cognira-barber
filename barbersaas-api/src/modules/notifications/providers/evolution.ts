@@ -125,11 +125,32 @@ export class EvolutionClient {
       throw new ProviderError(`Evolution no pudo cerrar la sesión (${r.status})`, true);
   }
 
-  async sendText(instance: string, toDigits: string, text: string): Promise<string | null> {
+  /** ¿Ese número tiene WhatsApp? null si Evolution no lo pudo comprobar (no se bloquea el envío). */
+  async hasWhatsApp(instance: string, toDigits: string): Promise<boolean | null> {
+    try {
+      const r = await this.call<Array<{ exists?: boolean }>>(
+        'POST',
+        `/chat/whatsappNumbers/${encodeURIComponent(instance)}`,
+        { numbers: [toDigits] },
+      );
+      if (r.status >= 400 || !Array.isArray(r.data) || !r.data[0]) return null;
+      return r.data[0].exists === true;
+    } catch {
+      return null;
+    }
+  }
+
+  async sendText(
+    instance: string,
+    toDigits: string,
+    text: string,
+    typingMs = 0,
+  ): Promise<string | null> {
     const r = await this.call<{ key?: { id?: string } }>(
       'POST',
       `/message/sendText/${encodeURIComponent(instance)}`,
-      { number: toDigits, text },
+      // delay = "escribiendo…" antes de enviar; sin vista previa de enlaces.
+      { number: toDigits, text, delay: typingMs, linkPreview: false },
     );
     if (r.status >= 400)
       throw new ProviderError(
@@ -141,31 +162,79 @@ export class EvolutionClient {
   }
 }
 
-/** Separación mínima entre mensajes de un mismo número (reduce el riesgo de bloqueo de WhatsApp). */
-const MIN_GAP_MS = 2500;
 const lastSend = new Map<string, number>();
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Números ya comprobados (con o sin WhatsApp), para no consultar en cada mensaje. */
+const checked = new Map<string, boolean>();
+
+export const REPLY_HINT = 'Si tienes alguna duda, responde a este mensaje.';
+
+export interface EvolutionSenderOptions {
+  /** Pausa propia entre mensajes (ms, aleatoria entre min y max). Para la plataforma; las barberías la controla el despachador. */
+  gapMs?: [number, number];
+  /** Agrega la invitación a responder al final. */
+  replyHint?: boolean;
+  /** "Escribiendo…" (ms, aleatorio entre min y max). */
+  typingMs?: [number, number];
+  rand?: () => number;
+}
 
 /**
  * Envía por el WhatsApp vinculado con QR. Si el número no está conectado, no se pierde el mensaje:
- * queda como envío manual (enlace wa.me), igual que sin proveedor.
+ * queda como envío manual (enlace wa.me), igual que sin proveedor. Antes de enviar comprueba que el
+ * destino tenga WhatsApp (escribir a números sin WhatsApp es una señal fuerte de spam).
  */
 export class EvolutionSender implements Sender {
   readonly name = 'evolution';
+  private readonly opts: Required<EvolutionSenderOptions>;
 
   constructor(
     private readonly client: EvolutionClient,
     private readonly instance: string,
-    private readonly gapMs = MIN_GAP_MS,
-  ) {}
+    opts: EvolutionSenderOptions | number = {},
+  ) {
+    const o = typeof opts === 'number' ? { gapMs: [opts, opts] as [number, number] } : opts;
+    this.opts = {
+      gapMs: [0, 0],
+      replyHint: false,
+      typingMs: [1200, 3500],
+      rand: Math.random,
+      ...o,
+    };
+  }
+
+  private between([a, b]: [number, number]) {
+    return Math.round(a + this.opts.rand() * Math.max(0, b - a));
+  }
 
   async send(msg: OutgoingMessage): Promise<SendResult> {
     const state = await this.client.state(this.instance);
     if (state !== 'open') return new WaMeSender().send(msg);
+    const to = msg.to.replace(/\D/g, '');
+    if (!checked.has(to)) {
+      const ok = await this.client.hasWhatsApp(this.instance, to);
+      if (ok !== null) checked.set(to, ok);
+    }
+    if (checked.get(to) === false)
+      throw new ProviderError(
+        'Ese número no tiene WhatsApp: no se envía (protege la reputación del número)',
+        false,
+        'NO_WHATSAPP',
+      );
+    const gap = this.between(this.opts.gapMs);
     const since = Date.now() - (lastSend.get(this.instance) ?? 0);
-    if (since < this.gapMs) await wait(this.gapMs - since);
+    if (gap > 0 && since < gap) await wait(gap - since);
     lastSend.set(this.instance, Date.now());
-    const id = await this.client.sendText(this.instance, msg.to.replace(/\D/g, ''), msg.body);
+    const text =
+      this.opts.replyHint && !msg.body.includes(REPLY_HINT)
+        ? `${msg.body}\n\n${REPLY_HINT}`
+        : msg.body;
+    const id = await this.client.sendText(
+      this.instance,
+      to,
+      text,
+      this.between(this.opts.typingMs),
+    );
     return { status: 'sent', providerMessageId: id };
   }
 
@@ -177,3 +246,6 @@ export class EvolutionSender implements Sender {
     return { displayPhone: (await this.client.phone(this.instance)) ?? '', name: null };
   }
 }
+
+/** Solo para pruebas: olvida los números comprobados. */
+export const resetEvolutionChecks = () => checked.clear();
